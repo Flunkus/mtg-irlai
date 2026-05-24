@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MTG Trainer — Sandbox Companion</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<style>
+  :root {
+    --accent: oklch(0.72 0.14 290);
+    --accent-glow: oklch(0.72 0.14 290 / 0.35);
+    --bg: #0a0a0b;
+  }
+  html, body, #root { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    font-family: 'Geist', ui-sans-serif, system-ui, sans-serif;
+    color: #e4e4e7;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .font-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  @keyframes micPulse {
+    0%   { transform: scale(1);   opacity: 0.5; }
+    100% { transform: scale(1.8); opacity: 0;   }
+  }
+  @keyframes popupIn {
+    0%   { transform: translateY(8px) scale(0.96); opacity: 0; }
+    100% { transform: translateY(0)    scale(1);    opacity: 1; }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes aiThinkPulse {
+    0%, 100% { opacity: 0.4; transform: scale(0.96); }
+    50%      { opacity: 1;   transform: scale(1.08); }
+  }
+  @keyframes aiSpeakPulse {
+    0%, 100% { opacity: 0.5; }
+    50%      { opacity: 0.9; }
+  }
+  @keyframes aiSpeakBar {
+    0%   { transform: scaleY(0.3); }
+    100% { transform: scaleY(1.4); }
+  }
+  @keyframes aiTyping {
+    0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+    40%           { opacity: 1;    transform: translateY(-2px); }
+  }
+  @keyframes bubbleSwap {
+    0%   { opacity: 0; transform: translateY(4px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes hintIn {
+    0%   { opacity: 0; transform: translateY(12px) scale(0.96); }
+    100% { opacity: 1; transform: translateY(0)    scale(1);    }
+  }
+  @keyframes hintSwap {
+    0%   { opacity: 0; transform: translateY(3px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes hintPulse {
+    0%, 100% { opacity: 0.4; }
+    50%      { opacity: 1; }
+  }
+  @keyframes playedToast {
+    0%   { opacity: 0; transform: translate(-50%, 6px) scale(0.94); }
+    20%  { opacity: 1; transform: translate(-50%, 0)    scale(1);    }
+    80%  { opacity: 1; transform: translate(-50%, 0)    scale(1);    }
+    100% { opacity: 0; transform: translate(-50%, -8px) scale(0.96); }
+  }
+
+  /* Sleek scrollbars */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #3f3f46; background-clip: padding-box; border: 2px solid transparent; }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script type="text/babel" src="card-data.jsx"></script>
+<script type="text/babel" src="card-token.jsx"></script>
+<script type="text/babel" src="ai-persona.jsx"></script>
+<script type="text/babel" src="hint-coach.jsx"></script>
+<script type="text/babel" src="play-bar.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="deck-manager.jsx"></script>
+<script type="text/babel" src="battlefield.jsx"></script>
+
+<script type="text/babel" data-presets="env,react">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#a78bfa",
+  "deckName": "Azure Tempo",
+  "aiName": "Pyro the Reckless",
+  "startingLife": 20
+}/*EDITMODE-END*/;
+
+const ACCENT_PALETTES = {};
+
+
+function Sidebar({ view, setView }) {
+  const items = [
+    { id: 'battlefield', label: 'Battlefield', icon: BattleIcon, hint: 'Active game' },
+    { id: 'deck',        label: 'Deck Manager', icon: DeckIcon,  hint: '60-card lists' },
+  ];
+  return (
+    <aside className="w-[72px] shrink-0 bg-zinc-950 border-r border-zinc-800/80 flex flex-col items-center py-4">
+      <div
+        className="w-10 h-10 rounded-lg flex items-center justify-center font-mono font-bold text-zinc-50 mb-6"
+        style={{
+          background: 'linear-gradient(135deg, var(--accent), oklch(0.5 0.12 280))',
+          boxShadow: '0 4px 12px var(--accent-glow), inset 0 1px 0 rgba(255,255,255,0.2)',
+          fontSize: 15,
+        }}
+      >
+        ⌘
+      </div>
+      <nav className="flex flex-col gap-1.5 w-full px-2">
+        {items.map(item => {
+          const Active = view === item.id;
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setView(item.id)}
+              className="group relative aspect-square rounded-lg flex flex-col items-center justify-center gap-1 transition-all"
+              style={{
+                background: Active ? 'rgba(160,120,255,0.12)' : 'transparent',
+                color: Active ? 'var(--accent)' : '#71717a',
+              }}
+              onMouseEnter={e => !Active && (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+              onMouseLeave={e => !Active && (e.currentTarget.style.background = 'transparent')}
+            >
+              <Icon active={Active} />
+              <div className="text-[9px] font-mono uppercase tracking-wider">{item.label.split(' ')[0]}</div>
+              {Active && (
+                <div
+                  className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r"
+                  style={{ background: 'var(--accent)' }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="mt-auto flex flex-col gap-1.5 w-full px-2">
+        <div className="aspect-square rounded-lg flex items-center justify-center text-zinc-600">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="6" stroke="currentColor" strokeWidth="1.4"/>
+            <path d="M10 7v3l2 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+          </svg>
+        </div>
+        <div className="aspect-square rounded-lg flex items-center justify-center text-zinc-600 cursor-pointer hover:text-zinc-300 transition-colors">
+          <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="2.5" stroke="currentColor" strokeWidth="1.4"/>
+            <path d="M10 1v3M10 16v3M1 10h3M16 10h3M3.5 3.5l2 2M14.5 14.5l2 2M3.5 16.5l2-2M14.5 5.5l2-2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+          </svg>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function BattleIcon({ active }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="4" width="7" height="9" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+      <rect x="14" y="11" width="7" height="9" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+      <path d="M9 11l5-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  );
+}
+function DeckIcon({ active }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <rect x="6" y="3" width="12" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.5"/>
+      <path d="M9 7h6M9 11h6M9 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+// Color → accent-hue map (hex values used by TweakColor swatches)
+const ACCENT_HEX_TO_HUE = {
+  '#a78bfa': 290, // violet
+  '#60a5fa': 240, // azure
+  '#fbbf24':  70, // amber
+  '#34d399': 150, // emerald
+};
+
+function App() {
+  const [view, setView] = React.useState('battlefield');
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  // Apply accent via CSS var
+  React.useEffect(() => {
+    const hue = ACCENT_HEX_TO_HUE[tweaks.accent] ?? 290;
+    document.documentElement.style.setProperty('--accent', `oklch(0.72 0.14 ${hue})`);
+    document.documentElement.style.setProperty('--accent-glow', `oklch(0.72 0.14 ${hue} / 0.35)`);
+  }, [tweaks.accent]);
+
+  return (
+    <div className="h-screen flex flex-row bg-zinc-950">
+      <Sidebar view={view} setView={setView} />
+      <main className="flex-1 min-w-0 relative" data-screen-label={view === 'battlefield' ? 'Battlefield' : 'Deck Manager'}>
+        <div key={view} style={{ animation: 'fadeIn 240ms ease-out', height: '100%' }}>
+          {view === 'battlefield' ? <Battlefield /> : <DeckManager />}
+        </div>
+      </main>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection label="Accent">
+          <TweakColor
+            label="Accent color"
+            value={tweaks.accent}
+            onChange={v => setTweak('accent', v)}
+            options={['#a78bfa', '#60a5fa', '#fbbf24', '#34d399']}
+          />
+        </TweakSection>
+        <TweakSection label="Names" />
+        <TweakText label="Deck name" value={tweaks.deckName} onChange={v => setTweak('deckName', v)} />
+        <TweakText label="AI opponent" value={tweaks.aiName} onChange={v => setTweak('aiName', v)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>

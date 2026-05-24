@@ -1,0 +1,39 @@
+{
+  "name": "mtg-irlai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local web app that acts as a Claude-powered AI opponent for in-person Magic: The Gathering games. The cardboard stays on the table; the app handles state, voice commands, and AI move suggestions.",
+  "type": "module",
+  "homepage": "https://github.com/Flunkus/mtg-irlai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flunkus/mtg-irlai.git"
+  },
+  "author": "Flunkus",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
+    "clsx": "^2.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "scryfall-client": "^0.24.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^18.3.29",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "autoprefixer": "^10.5.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  }
+}
