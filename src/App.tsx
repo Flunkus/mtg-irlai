@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { Battlefield } from './views/Battlefield';
 import { DeckManager } from './views/DeckManager';
 import { CardViewer } from './views/CardViewer';
+import { PersonaManager } from './views/PersonaManager';
 import { TweaksPanel, TweakSection, TweakColor, useTweaks } from './components/TweaksPanel';
 import { GameProvider } from './state/gameStore';
 import { DeckLibraryProvider } from './state/deckLibrary';
@@ -23,7 +24,7 @@ const ACCENT_HEX_TO_HUE: Record<string, number> = {
 };
 
 export default function App() {
-  const [view, setView] = React.useState<'battlefield' | 'deck' | 'viewer'>('battlefield');
+  const [view, setView] = React.useState<'battlefield' | 'deck' | 'viewer' | 'personas'>('battlefield');
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const [tweaksOpen, setTweaksOpen] = React.useState(false);
   const [jsonOpen, setJsonOpen] = React.useState(false);
@@ -48,11 +49,20 @@ export default function App() {
         />
         <main
           className="flex-1 min-w-0 relative"
-          data-screen-label={view === 'battlefield' ? 'Battlefield' : view === 'deck' ? 'Deck Manager' : 'Card Viewer'}
+          data-screen-label={
+            view === 'battlefield'
+              ? 'Battlefield'
+              : view === 'deck'
+              ? 'Deck Manager'
+              : view === 'personas'
+              ? 'Personas'
+              : 'Card Viewer'
+          }
         >
           <div key={view} style={{ animation: 'fadeIn 240ms ease-out', height: '100%' }}>
             {view === 'battlefield' && <Battlefield />}
             {view === 'deck' && <DeckManager />}
+            {view === 'personas' && <PersonaManager />}
             {view === 'viewer' && <CardViewer />}
           </div>
         </main>
