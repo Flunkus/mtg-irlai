@@ -43,6 +43,20 @@ export const GameActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('declare_attackers'),
     attackers: z.array(z.string()).describe('Names of attacking creatures on the human battlefield.'),
   }),
+  z.object({
+    kind: z.literal('ai_declare_attackers'),
+    attackers: z
+      .array(z.string())
+      .describe(
+        'Names of AI creatures (already on the AI battlefield, untapped) declared as attackers. The human will then assign blockers.',
+      ),
+  }),
+  z.object({
+    kind: z.literal('add_counter'),
+    cardName: z.string().describe('Name of the card on a battlefield to add a counter to.'),
+    counter: z.enum(['plusOne', 'minusOne', 'loyalty', 'charge']).describe('Counter kind. plusOne = +1/+1, minusOne = -1/-1.'),
+    delta: z.number().int().describe('How many counters to add (negative to remove).'),
+  }),
 ]);
 
 export type GameAction = z.infer<typeof GameActionSchema>;

@@ -15,6 +15,10 @@ export interface Card {
   qty?: number;
   tapped?: boolean;
   freeform?: boolean;
+  /** Marks creature/permanent tokens (not real cards from a deck). Lets the UI tag them. */
+  token?: boolean;
+  /** Arbitrary counters on the permanent. `plusOne` is read by CardToken to adjust displayed P/T. */
+  counters?: { plusOne?: number; minusOne?: number; loyalty?: number; charge?: number; [k: string]: number | undefined };
   /** Phase 2: Scryfall image (image_uris.normal). When set, CardToken renders the art. */
   imageUrl?: string;
   /** Phase 2: Scryfall oracle text, persisted for LLM prompts. */

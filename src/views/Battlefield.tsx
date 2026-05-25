@@ -10,11 +10,10 @@ import { AIPersona } from '../components/AIPersona';
 import { HintCard, deriveHint } from '../components/HintCoach';
 import { PlayBar, type Zone as PlayZone, type Side as PlaySide } from '../components/PlayBar';
 import { useGame, computeCombatResult, type Player } from '../state/gameStore';
-import { useDeck } from '../state/deckStore';
 import { useDeckLibrary } from '../state/deckLibrary';
 import { STARTER_DECK } from '../mocks/sampleDeck';
-import { PHASES } from '../types';
-import type { Card } from '../types';
+import { PHASES, MANA_COLORS } from '../types';
+import type { Card, ManaColor } from '../types';
 import { proposeAIMove } from '../llm/aiBrain';
 import { applyActions } from '../llm/applyActions';
 import { isLLMConfigured } from '../llm/client';
@@ -99,23 +98,42 @@ function Avatar({ name, side, active }: { name: string; side: 'ai' | 'human'; ac
 function PhaseIndicator({
   phase,
   turn,
+  activeSide,
   onNext,
 }: {
   phase: string;
   turn: number;
+  activeSide: 'human' | 'ai';
   onNext: () => void;
 }) {
+  const isAI = activeSide === 'ai';
+  const activeColor = isAI ? '#f87171' : 'var(--accent)';
+  const activeGlow = isAI ? 'rgba(248,113,113,0.35)' : 'var(--accent-glow)';
   return (
     <div className="flex items-center gap-3">
+      {/* "Whose turn" badge — the loudest single hint of who's acting right now. */}
+      <div
+        className="px-2.5 py-1 rounded font-mono text-[10px] uppercase tracking-[0.16em] font-bold"
+        style={{
+          background: isAI ? 'rgba(248,113,113,0.18)' : 'rgba(160,120,255,0.18)',
+          color: activeColor,
+          border: `1px solid ${activeGlow}`,
+        }}
+        title={isAI ? "AI's turn" : 'Your turn'}
+      >
+        {isAI ? 'AI turn' : 'Your turn'}
+      </div>
+
       <div className="flex items-center gap-1">
         {PHASES.map((p) => (
           <div
             key={p}
             className="px-2.5 py-1 rounded font-mono text-[10px] uppercase tracking-wider transition-all"
             style={{
-              background: p === phase ? 'var(--accent)' : 'transparent',
+              background: p === phase ? activeColor : 'transparent',
               color: p === phase ? '#18181b' : '#52525b',
               fontWeight: p === phase ? 700 : 500,
+              boxShadow: p === phase ? `0 0 12px ${activeGlow}` : 'none',
             }}
           >
             {p}
@@ -124,7 +142,8 @@ function PhaseIndicator({
       </div>
       <button
         onClick={onNext}
-        className="ml-1 px-4 py-2 rounded-md bg-zinc-900 border border-zinc-800 hover:border-[var(--accent)] hover:bg-zinc-800 text-zinc-200 text-sm font-medium transition-all flex items-center gap-2 active:scale-[0.98]"
+        className="ml-1 px-4 py-2 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-200 text-sm font-medium transition-all flex items-center gap-2 active:scale-[0.98]"
+        style={{ borderColor: activeGlow }}
       >
         Next phase
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -202,7 +221,12 @@ interface ZoneProps {
   attackerIds?: string[];
   blockerMap?: Record<string, string>;
   combatStep?: 'declare' | 'blockers' | null;
+  attackingSide?: 'ai' | 'human';
   pickingBlockerFor?: string | null;
+  /** Called when the user wants to adjust +1/+1 counters on a creature. */
+  onAdjustCounter?: (cardId: string, kind: 'plusOne', delta: number) => void;
+  /** Called when the user picks a destination from the card's move menu. */
+  onMoveCard?: (cardId: string, toZone: 'graveyard' | 'exile' | 'hand') => void;
 }
 
 function Zone({
@@ -216,52 +240,62 @@ function Zone({
   attackerIds = [],
   blockerMap = {},
   combatStep = null,
+  attackingSide = 'human',
   pickingBlockerFor = null,
+  onAdjustCounter,
+  onMoveCard,
 }: ZoneProps) {
   const cardSize = density === 'compact' ? 'xs' : 'sm';
   const lands = cards.filter((c) => /Land/i.test(c.type));
   const nonlands = cards.filter((c) => !/Land/i.test(c.type));
+  const defendingSide: 'ai' | 'human' = attackingSide === 'human' ? 'ai' : 'human';
 
   const attackerOrder = attackerIds;
   const pairIdxFor = (cardId: string) => {
-    if (side === 'human') return attackerOrder.indexOf(cardId);
+    if (side === attackingSide) return attackerOrder.indexOf(cardId);
     const entry = Object.entries(blockerMap).find(([, blk]) => blk === cardId);
     return entry ? attackerOrder.indexOf(entry[0]) : -1;
   };
 
   const showLabel =
-    combatStep === 'declare' && side === 'human'
+    combatStep === 'declare' && side === attackingSide
       ? 'select attackers'
-      : combatStep === 'blockers' && side === 'human'
+      : combatStep === 'blockers' && side === attackingSide
       ? pickingBlockerFor
-        ? 'pick a blocker →'
+        ? attackingSide === 'human'
+          ? 'pick a blocker →'
+          : '← pick a blocker'
         : 'click attacker'
-      : combatStep === 'blockers' && side === 'ai'
+      : combatStep === 'blockers' && side === defendingSide
       ? pickingBlockerFor
-        ? '← assign blocker'
-        : 'AI creatures available'
+        ? attackingSide === 'human'
+          ? '← assign blocker'
+          : 'assign blocker →'
+        : 'creatures available'
       : null;
 
   const renderCreature = (c: Card) => {
-    const isAttacker = side === 'human' && attackerIds.includes(c.id);
-    const isBlocker = side === 'ai' && Object.values(blockerMap).includes(c.id);
-    const isPicking = side === 'human' && pickingBlockerFor === c.id;
+    const isAttacker = side === attackingSide && attackerIds.includes(c.id);
+    const isBlocker = side === defendingSide && Object.values(blockerMap).includes(c.id);
+    const isPicking = side === attackingSide && pickingBlockerFor === c.id;
     const canInteract =
-      (combatStep === 'declare' && side === 'human' && /Creature/i.test(c.type)) ||
-      (combatStep === 'blockers' && side === 'human' && isAttacker) ||
-      (combatStep === 'blockers' && side === 'ai' && /Creature/i.test(c.type) && !c.tapped);
+      // No combat in progress: anything on the battlefield is clickable to tap/untap.
+      !combatStep ||
+      (combatStep === 'declare' && side === attackingSide && /Creature/i.test(c.type)) ||
+      (combatStep === 'blockers' && side === attackingSide && isAttacker) ||
+      (combatStep === 'blockers' && side === defendingSide && /Creature/i.test(c.type) && !c.tapped);
     const pIdx = pairIdxFor(c.id);
     const pColor = pIdx >= 0 ? pairingColor(pIdx) : null;
     const lifted = isAttacker || isBlocker || isPicking;
 
     let hint: string | null = null;
-    if (combatStep === 'declare' && side === 'human' && /Creature/i.test(c.type) && !isAttacker)
+    if (combatStep === 'declare' && side === attackingSide && /Creature/i.test(c.type) && !isAttacker)
       hint = 'click to attack';
-    if (combatStep === 'blockers' && side === 'human' && isAttacker && !pickingBlockerFor)
-      hint = 'assign blocker';
+    if (combatStep === 'blockers' && side === attackingSide && isAttacker && !pickingBlockerFor)
+      hint = 'pick blocker';
     if (
       combatStep === 'blockers' &&
-      side === 'ai' &&
+      side === defendingSide &&
       pickingBlockerFor &&
       !c.tapped &&
       /Creature/i.test(c.type) &&
@@ -272,7 +306,7 @@ function Zone({
     return (
       <div
         key={c.id}
-        className="relative"
+        className="relative group"
         style={{
           filter: lifted ? `drop-shadow(0 0 14px ${pColor || 'var(--accent-glow)'})` : 'none',
           transition: 'filter 200ms, transform 200ms',
@@ -296,7 +330,7 @@ function Zone({
           }}
         />
         {pIdx >= 0 && pColor && (
-          <PairBadge pairIdx={pIdx} color={pColor} role={side === 'human' ? 'attacker' : 'blocker'} />
+          <PairBadge pairIdx={pIdx} color={pColor} role={side === attackingSide ? 'attacker' : 'blocker'} />
         )}
         <CardToken
           card={c}
@@ -306,6 +340,17 @@ function Zone({
           onClick={canInteract ? () => onCardClick(c.id) : undefined}
           onZoom={() => onCardZoom(c)}
         />
+        {/* +1/+1 counter widget — only on creatures, only outside combat. Visible on hover, shows count when > 0. */}
+        {/Creature/i.test(c.type) && onAdjustCounter && !combatStep && (
+          <CounterWidget
+            count={c.counters?.plusOne ?? 0}
+            onAdd={(delta) => onAdjustCounter(c.id, 'plusOne', delta)}
+          />
+        )}
+        {/* Move-to menu — visible on hover. Sends the card to graveyard / exile / hand. */}
+        {onMoveCard && !combatStep && (
+          <CardMoveMenu onMove={(toZone) => onMoveCard(c.id, toZone)} />
+        )}
         {canInteract && !isAttacker && !isBlocker && !isPicking && hint && (
           <div
             className="absolute inset-0 rounded-[10px] pointer-events-none flex items-end justify-center pb-2 opacity-0 hover:opacity-100"
@@ -327,7 +372,8 @@ function Zone({
   };
 
   const combatHighlight =
-    (combatStep === 'declare' && side === 'human') || (combatStep === 'blockers' && side === 'ai');
+    (combatStep === 'declare' && side === attackingSide) ||
+    (combatStep === 'blockers' && side === defendingSide);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -345,7 +391,7 @@ function Zone({
         <div className="flex-1 h-px bg-zinc-800/60" />
       </div>
       <div
-        className="flex-1 rounded-lg flex flex-col gap-3 p-3 min-h-0 overflow-hidden"
+        className="flex-1 rounded-lg flex flex-col gap-3 p-3 min-h-0 overflow-y-auto"
         style={{
           background: accent || 'rgba(24,24,27,0.4)',
           border: combatHighlight ? '1px solid var(--accent-glow)' : '1px solid rgba(255,255,255,0.04)',
@@ -358,15 +404,19 @@ function Zone({
         {lands.length > 0 && (
           <div className="flex gap-2 flex-wrap items-start mt-auto">
             {lands.map((c) => (
-              <CardToken
-                key={c.id}
-                card={c}
-                size="xs"
-                tapped={c.tapped}
-                hideRemove
-                onClick={() => onCardClick(c.id)}
-                onZoom={() => onCardZoom(c)}
-              />
+              <div key={c.id} className="relative group">
+                <CardToken
+                  card={c}
+                  size="xs"
+                  tapped={c.tapped}
+                  hideRemove
+                  onClick={() => onCardClick(c.id)}
+                  onZoom={() => onCardZoom(c)}
+                />
+                {onMoveCard && !combatStep && (
+                  <CardMoveMenu onMove={(toZone) => onMoveCard(c.id, toZone)} />
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -392,6 +442,7 @@ function StepDot({ active, done, label }: { active: boolean; done: boolean; labe
 
 interface CombatBarProps {
   step: 'declare' | 'blockers';
+  attackingSide: 'human' | 'ai';
   attackers: Card[];
   blockerMap: Record<string, string>;
   aiBoard: Card[];
@@ -404,6 +455,7 @@ interface CombatBarProps {
 
 function CombatBar({
   step,
+  attackingSide,
   attackers,
   blockerMap,
   onContinueToBlockers,
@@ -412,6 +464,10 @@ function CombatBar({
   onSkipBlockers,
   onAutoBlock,
 }: CombatBarProps) {
+  const defenderLabel = attackingSide === 'human' ? 'AI' : 'Your';
+  const attackerLabel = attackingSide === 'human' ? 'You declare' : 'AI attacks with';
+  const accentColor = attackingSide === 'human' ? 'var(--accent)' : '#f87171';
+  const accentGlow = attackingSide === 'human' ? 'var(--accent-glow)' : 'rgba(248,113,113,0.35)';
   const totalDamage = attackers.reduce(
     (s, c) => s + (c.pt ? parseInt(c.pt.split('/')[0]) || 0 : 0),
     0,
@@ -425,8 +481,11 @@ function CombatBar({
     <div
       className="rounded-lg mt-3 overflow-hidden"
       style={{
-        background: 'linear-gradient(90deg, rgba(160,120,255,0.12), rgba(160,120,255,0.04))',
-        border: '1px solid var(--accent-glow)',
+        background:
+          attackingSide === 'human'
+            ? 'linear-gradient(90deg, rgba(160,120,255,0.12), rgba(160,120,255,0.04))'
+            : 'linear-gradient(90deg, rgba(248,113,113,0.14), rgba(248,113,113,0.05))',
+        border: `1px solid ${accentGlow}`,
         animation: 'fadeIn 240ms ease-out',
       }}
     >
@@ -445,8 +504,8 @@ function CombatBar({
           <>
             <div className="text-zinc-100 text-sm font-medium shrink-0">
               {attackers.length === 0
-                ? 'No attackers'
-                : `${attackers.length} attacker${attackers.length > 1 ? 's' : ''}`}
+                ? `No attackers (${attackerLabel.toLowerCase()})`
+                : `${attackerLabel} ${attackers.length}`}
             </div>
             {attackers.length > 0 && (
               <>
@@ -454,7 +513,7 @@ function CombatBar({
                   <span className="text-zinc-500 font-mono uppercase tracking-wider text-[10px]">
                     dealing
                   </span>
-                  <span className="font-mono font-bold text-base" style={{ color: 'var(--accent)' }}>
+                  <span className="font-mono font-bold text-base" style={{ color: accentColor }}>
                     {totalDamage}
                   </span>
                   <span className="text-zinc-500 font-mono">damage</span>
@@ -474,6 +533,7 @@ function CombatBar({
         {step === 'blockers' && (
           <>
             <div className="text-zinc-100 text-sm font-medium shrink-0">
+              {attackingSide === 'ai' && `AI attacks — `}
               {blockedCount}/{attackers.length} blocked
             </div>
             <div className="flex items-center gap-1.5 text-xs shrink-0">
@@ -484,7 +544,7 @@ function CombatBar({
               >
                 {unblockedDmg}
               </span>
-              <span className="text-zinc-500 font-mono">→ AI life</span>
+              <span className="text-zinc-500 font-mono">→ {defenderLabel} life</span>
             </div>
           </>
         )}
@@ -492,7 +552,7 @@ function CombatBar({
 
       <div
         className="flex items-center gap-2 px-4 py-2.5 border-t"
-        style={{ borderColor: 'rgba(160,120,255,0.18)', background: 'rgba(0,0,0,0.2)' }}
+        style={{ borderColor: accentGlow, background: 'rgba(0,0,0,0.2)' }}
       >
         {step === 'declare' && (
           <>
@@ -510,7 +570,7 @@ function CombatBar({
               disabled={attackers.length === 0}
               className="px-4 py-1.5 rounded text-sm font-medium transition-all active:scale-[0.98]"
               style={{
-                background: attackers.length === 0 ? '#27272a' : 'var(--accent)',
+                background: attackers.length === 0 ? '#27272a' : accentColor,
                 color: attackers.length === 0 ? '#52525b' : '#18181b',
                 cursor: attackers.length === 0 ? 'not-allowed' : 'pointer',
               }}
@@ -522,28 +582,31 @@ function CombatBar({
 
         {step === 'blockers' && (
           <>
-            <button
-              onClick={onAutoBlock}
-              className="px-3 py-1.5 rounded text-xs font-medium transition-all flex items-center gap-1.5"
-              style={{
-                background: 'rgba(160,120,255,0.14)',
-                color: 'var(--accent)',
-                border: '1px solid var(--accent-glow)',
-              }}
-              title="Let the AI auto-assign blockers"
-            >
-              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M2 4l4 4 4-4"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle cx="6" cy="2" r="0.8" fill="currentColor" />
-              </svg>
-              Auto-block (AI)
-            </button>
+            {/* Auto-block is only meaningful when AI is defending (i.e. human is attacking). */}
+            {attackingSide === 'human' && (
+              <button
+                onClick={onAutoBlock}
+                className="px-3 py-1.5 rounded text-xs font-medium transition-all flex items-center gap-1.5"
+                style={{
+                  background: 'rgba(160,120,255,0.14)',
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent-glow)',
+                }}
+                title="Let the AI auto-assign blockers"
+              >
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="M2 4l4 4 4-4"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="6" cy="2" r="0.8" fill="currentColor" />
+                </svg>
+                Auto-block (AI)
+              </button>
+            )}
             <button
               onClick={onSkipBlockers}
               className="px-3 py-1.5 rounded text-xs font-medium text-zinc-300 hover:text-zinc-100 hover:bg-zinc-900 transition-colors border border-zinc-800"
@@ -555,7 +618,7 @@ function CombatBar({
             <button
               onClick={onResolve}
               className="px-4 py-1.5 rounded text-sm font-medium transition-all active:scale-[0.98] flex items-center gap-1.5"
-              style={{ background: 'var(--accent)', color: '#18181b' }}
+              style={{ background: accentColor, color: '#18181b' }}
             >
               Resolve combat
               <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
@@ -570,6 +633,146 @@ function CombatBar({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function CardMoveMenu({ onMove }: { onMove: (toZone: 'graveyard' | 'exile' | 'hand') => void }) {
+  const [open, setOpen] = React.useState(false);
+
+  // Close on outside click. We listen at the document level since the menu is positioned absolutely
+  // inside the card wrapper and may be partially clipped by its overflow ancestor.
+  React.useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const t = setTimeout(() => document.addEventListener('click', close), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('click', close);
+    };
+  }, [open]);
+
+  const items: { id: 'graveyard' | 'exile' | 'hand'; label: string; symbol: string; color: string }[] = [
+    { id: 'graveyard', label: 'Graveyard', symbol: '✕', color: '#a1a1aa' },
+    { id: 'exile',     label: 'Exile',     symbol: '⊘', color: '#fbbf24' },
+    { id: 'hand',      label: 'Hand',      symbol: '◦', color: 'var(--accent)' },
+  ];
+
+  return (
+    <div
+      className={`absolute -bottom-2 -right-2 transition-opacity ${open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+      style={{ zIndex: 6 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="w-7 h-7 rounded-full font-mono text-xs flex items-center justify-center transition-all active:scale-95"
+        style={{
+          background: open ? 'var(--accent)' : 'rgba(24,24,27,0.92)',
+          color: open ? '#18181b' : '#d4d4d8',
+          border: `1.5px solid ${open ? 'var(--accent)' : '#3f3f46'}`,
+          boxShadow: '0 0 0 1.5px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.5)',
+        }}
+        title="Move card…"
+        aria-label="Move card"
+      >
+        ⇢
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 bottom-9 rounded-md overflow-hidden"
+          style={{
+            background: 'rgba(10,10,12,0.97)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
+            minWidth: 140,
+            animation: 'hintIn 140ms ease-out',
+          }}
+        >
+          <div className="px-2.5 py-1.5 border-b border-zinc-800/70 text-[9px] uppercase tracking-[0.16em] font-mono text-zinc-500">
+            Move to…
+          </div>
+          {items.map((it) => (
+            <button
+              key={it.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                onMove(it.id);
+                setOpen(false);
+              }}
+              className="w-full px-3 py-2 flex items-center gap-2.5 text-left transition-colors hover:bg-zinc-800/60"
+            >
+              <span className="font-mono text-sm" style={{ color: it.color, width: 14, textAlign: 'center' }}>
+                {it.symbol}
+              </span>
+              <span className="text-zinc-100 text-[12px] flex-1">{it.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CounterWidget({
+  count,
+  onAdd,
+}: {
+  count: number;
+  onAdd: (delta: number) => void;
+}) {
+  // Visible when there's at least one counter, or on hover (via group-hover from the renderCreature wrapper).
+  const visible = count > 0;
+  return (
+    <div
+      className={`absolute -bottom-2 -left-2 flex items-center gap-1 transition-opacity ${visible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+      style={{ zIndex: 4 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onAdd(1);
+        }}
+        className="rounded-full font-mono font-bold flex items-center justify-center transition-all active:scale-95"
+        style={{
+          minWidth: 26,
+          height: 22,
+          padding: '0 6px',
+          fontSize: 11,
+          background: count > 0 ? '#16a34a' : 'rgba(24,24,27,0.92)',
+          color: count > 0 ? '#f0fdf4' : '#a1a1aa',
+          border: `1.5px solid ${count > 0 ? '#16a34a' : '#3f3f46'}`,
+          boxShadow: count > 0
+            ? '0 0 0 1.5px rgba(0,0,0,0.45), 0 0 10px rgba(22,163,74,0.5)'
+            : '0 0 0 1.5px rgba(0,0,0,0.45)',
+        }}
+        title={count > 0 ? `+${count}/+${count} counters — click to add another` : 'Add +1/+1 counter'}
+      >
+        {count > 0 ? `+${count}/+${count}` : '+1/+1'}
+      </button>
+      {count > 0 && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onAdd(-1);
+          }}
+          className="w-5 h-5 rounded-full font-mono font-bold text-[11px] flex items-center justify-center transition-all active:scale-95"
+          style={{
+            background: 'rgba(24,24,27,0.92)',
+            color: '#a1a1aa',
+            border: '1.5px solid #3f3f46',
+            boxShadow: '0 0 0 1.5px rgba(0,0,0,0.45)',
+          }}
+          title="Remove a +1/+1 counter"
+        >
+          −
+        </button>
+      )}
     </div>
   );
 }
@@ -612,6 +815,606 @@ function HandZone({
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ShowHandButton({
+  side,
+  count,
+  open,
+  onToggle,
+}: {
+  side: 'ai' | 'human';
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const accent = side === 'ai' ? 'rgba(248,113,113,0.18)' : 'var(--accent-glow)';
+  const fg = side === 'ai' ? '#f87171' : 'var(--accent)';
+  return (
+    <button
+      onClick={onToggle}
+      className="px-3 py-1.5 rounded-md text-[11px] font-mono uppercase tracking-wider transition-all flex items-center gap-2 active:scale-[0.98]"
+      style={{
+        background: open ? accent : 'rgba(24,24,27,0.6)',
+        color: open ? fg : '#a1a1aa',
+        border: `1px solid ${open ? accent : 'rgba(255,255,255,0.06)'}`,
+      }}
+      title={open ? 'Hide hand' : 'Show hand'}
+    >
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+        <rect x="1.5" y="3" width="9" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M3.5 5h5M3.5 7h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+      <span>{open ? 'Hide' : 'Show'} hand</span>
+      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.4)', color: fg }}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function CreateTokenButton({ side, onClick }: { side: 'ai' | 'human'; onClick: () => void }) {
+  const accent = side === 'ai' ? 'rgba(248,113,113,0.18)' : 'var(--accent-glow)';
+  const fg = side === 'ai' ? '#f87171' : 'var(--accent)';
+  return (
+    <button
+      onClick={onClick}
+      className="px-3 py-1.5 rounded-md text-[11px] font-mono uppercase tracking-wider transition-all flex items-center gap-1.5 active:scale-[0.98]"
+      style={{
+        background: 'rgba(24,24,27,0.6)',
+        color: '#a1a1aa',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = accent;
+        (e.currentTarget as HTMLButtonElement).style.color = fg;
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = 'rgba(24,24,27,0.6)';
+        (e.currentTarget as HTMLButtonElement).style.color = '#a1a1aa';
+      }}
+      title={`Create a token for ${side === 'human' ? 'your' : "the AI's"} side`}
+    >
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+        <path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      Token
+    </button>
+  );
+}
+
+function HandOverlay({
+  side,
+  cards,
+  count,
+  untrackedCount,
+  anchor,
+  onClose,
+  onCardZoom,
+  onRemove,
+}: {
+  side: 'ai' | 'human';
+  cards: Card[];
+  count: number;
+  /** For the human side only: physical cards in hand that aren't tracked individually (e.g. from a count-only draw). */
+  untrackedCount?: number;
+  /** Which edge to anchor to. AI hand drops from the top of the play area; human hand rises from above the bottom toolbar. */
+  anchor: 'top' | 'bottom';
+  onClose: () => void;
+  onCardZoom: (card: Card) => void;
+  /** Optional — when provided, each card gets a remove button. */
+  onRemove?: (cardId: string) => void;
+}) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const isAI = side === 'ai';
+  const ring = isAI ? 'rgba(248,113,113,0.35)' : 'var(--accent-glow)';
+  const tint = isAI ? 'rgba(248,113,113,0.08)' : 'rgba(160,120,255,0.08)';
+  const fg = isAI ? '#f87171' : 'var(--accent)';
+  const positionClass = anchor === 'top' ? 'top-20' : 'bottom-28';
+
+  return (
+    <>
+      {/* Click-outside dismiss layer (transparent — keep the board visible). */}
+      <div className="fixed inset-0 z-30" onClick={onClose} />
+      <div
+        className={`fixed left-1/2 -translate-x-1/2 ${positionClass} z-40 rounded-xl overflow-hidden`}
+        style={{
+          background: `linear-gradient(180deg, #1a1a1e, #131316)`,
+          border: `1px solid ${ring}`,
+          boxShadow: `0 20px 60px rgba(0,0,0,0.55), 0 0 80px ${tint}`,
+          animation: 'popupIn 220ms cubic-bezier(.2,.9,.3,1.2)',
+          width: 'min(880px, 92vw)',
+          maxHeight: '60vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b border-zinc-800/80 flex items-center gap-3 shrink-0">
+          <div
+            className="w-7 h-7 rounded-md flex items-center justify-center font-mono text-[11px] font-bold"
+            style={{ background: fg, color: '#18181b' }}
+          >
+            {isAI ? 'AI' : 'P1'}
+          </div>
+          <div className="flex-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-mono">
+              {isAI ? "AI's hand" : 'Your hand'}
+            </div>
+            <div className="text-zinc-100 text-sm font-medium">
+              {count} {count === 1 ? 'card' : 'cards'}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center justify-center"
+            aria-label="Close"
+            title="Close (Esc)"
+          >
+            <svg width="11" height="11" viewBox="0 0 10 10">
+              <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="p-3 overflow-auto min-h-0 flex flex-col gap-3">
+          {cards.length === 0 && (untrackedCount ?? 0) === 0 ? (
+            <EmptyHandNote
+              text={
+                isAI
+                  ? "AI's hand is empty. As the AI draws, those cards will appear here."
+                  : 'Your hand is empty. Use the play bar to log cards you draw — they will appear here.'
+              }
+              accent={fg}
+            />
+          ) : (
+            <>
+              {cards.length > 0 && (
+                <div className="flex gap-2 flex-wrap">
+                  {cards.map((c) => (
+                    <CardToken
+                      key={c.id}
+                      card={c}
+                      size="sm"
+                      hideRemove={!onRemove}
+                      onRemove={onRemove ? () => onRemove(c.id) : undefined}
+                      onZoom={() => onCardZoom(c)}
+                    />
+                  ))}
+                </div>
+              )}
+              {!isAI && (untrackedCount ?? 0) > 0 && (
+                <EmptyHandNote
+                  text={`${untrackedCount} additional ${untrackedCount === 1 ? 'card' : 'cards'} in hand untracked (kept as a count). Use the play bar with "for: You → Hand" to track them individually.`}
+                  accent={fg}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function CreateTokenModal({
+  defaultSide,
+  onClose,
+  onCreate,
+}: {
+  defaultSide: 'human' | 'ai';
+  onClose: () => void;
+  onCreate: (token: { name: string; pt: string; type: string; color: ManaColor; side: 'human' | 'ai' }) => void;
+}) {
+  const [name, setName] = React.useState('Soldier');
+  const [power, setPower] = React.useState(1);
+  const [toughness, setToughness] = React.useState(1);
+  const [type, setType] = React.useState('Token Creature — Soldier');
+  const [color, setColor] = React.useState<ManaColor>('W');
+  const [side, setSide] = React.useState<'human' | 'ai'>(defaultSide);
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const create = () => {
+    const safeName = name.trim() || 'Token';
+    onCreate({
+      name: safeName,
+      pt: `${power}/${toughness}`,
+      type: type.trim() || 'Token Creature',
+      color,
+      side,
+    });
+    onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-[460px] rounded-xl overflow-hidden"
+        style={{
+          background: 'linear-gradient(180deg, #1c1c20, #131316)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08), 0 0 80px rgba(160,120,255,0.15)',
+          animation: 'popupIn 280ms cubic-bezier(.2,.9,.3,1.2)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-zinc-800/80 flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-md flex items-center justify-center font-mono text-xs font-bold"
+            style={{ background: 'var(--accent)', color: '#18181b' }}
+          >
+            ◆
+          </div>
+          <div className="flex-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Create token</div>
+            <div className="text-zinc-100 text-sm font-medium">Custom creature token onto the battlefield</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-6 h-6 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center justify-center"
+            aria-label="Close"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-4 flex flex-col gap-3">
+          <div>
+            <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">Name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && create()}
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 text-base focus:outline-none focus:border-[var(--accent)] transition-colors"
+              placeholder="Token name (e.g. Soldier, Treasure, Goblin)"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">Power</label>
+              <input
+                type="number"
+                value={power}
+                min={0}
+                onChange={(e) => setPower(parseInt(e.target.value) || 0)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 font-mono text-base focus:outline-none focus:border-[var(--accent)] transition-colors"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">Toughness</label>
+              <input
+                type="number"
+                value={toughness}
+                min={0}
+                onChange={(e) => setToughness(parseInt(e.target.value) || 0)}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 font-mono text-base focus:outline-none focus:border-[var(--accent)] transition-colors"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">Color</label>
+              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-md p-1">
+                {(['W', 'U', 'B', 'R', 'G', 'C'] as ManaColor[]).map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setColor(c)}
+                    className="w-7 h-7 rounded-full font-mono text-[11px] font-bold flex items-center justify-center transition-all"
+                    style={{
+                      background: MANA_COLORS[c].bg,
+                      color: MANA_COLORS[c].fg,
+                      boxShadow: color === c ? `inset 0 0 0 2px var(--accent), 0 0 8px var(--accent-glow)` : `inset 0 -1px 0 ${MANA_COLORS[c].ring}`,
+                    }}
+                    title={MANA_COLORS[c].name}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">Type line</label>
+            <input
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 text-base focus:outline-none focus:border-[var(--accent)] transition-colors"
+              placeholder="Token Creature — Soldier"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">For</label>
+            <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-md p-0.5">
+              {(['human', 'ai'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSide(s)}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded transition-colors ${
+                    side === s ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {s === 'human' ? 'You' : 'AI'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-zinc-800/80 flex gap-2.5">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-medium transition-colors"
+          >
+            Cancel
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={create}
+            className="px-4 py-2 rounded-md text-sm font-medium text-zinc-950 transition-all hover:brightness-110 active:scale-[0.98]"
+            style={{ background: 'var(--accent)' }}
+          >
+            Create token →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CombatResultPopup({
+  attackingSide,
+  defenderDamage,
+  deadAttackers,
+  deadBlockers,
+  perAttackerLog,
+  onClose,
+}: {
+  attackingSide: 'human' | 'ai';
+  defenderDamage: number;
+  deadAttackers: Card[];
+  deadBlockers: Card[];
+  perAttackerLog: { attacker: string; blocker?: string; outcome: 'hits' | 'trades' | 'kills' | 'dies' | 'clashes'; damage: number }[];
+  onClose: () => void;
+}) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const defenderLabel = attackingSide === 'human' ? 'AI' : 'You';
+  const aiAttacked = attackingSide === 'ai';
+  const accent = aiAttacked ? '#f87171' : 'var(--accent)';
+  const tint = aiAttacked ? 'rgba(248,113,113,0.15)' : 'rgba(160,120,255,0.15)';
+
+  const outcomePhrase = (entry: typeof perAttackerLog[number]): string => {
+    switch (entry.outcome) {
+      case 'hits': return `hits ${defenderLabel.toLowerCase()} for ${entry.damage}`;
+      case 'trades': return `trades with ${entry.blocker}`;
+      case 'kills': return `kills ${entry.blocker}`;
+      case 'dies': return `dies to ${entry.blocker}`;
+      case 'clashes': return `clashes with ${entry.blocker} (no damage)`;
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-[480px] rounded-xl overflow-hidden"
+        style={{
+          background: 'linear-gradient(180deg, #1c1c20, #131316)',
+          boxShadow: `0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08), 0 0 80px ${tint}`,
+          animation: 'popupIn 240ms cubic-bezier(.2,.9,.3,1.2)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-zinc-800/80 flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-md flex items-center justify-center font-mono text-xs font-bold"
+            style={{ background: accent, color: '#18181b' }}
+          >
+            ⚔
+          </div>
+          <div className="flex-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Combat resolved</div>
+            <div className="text-zinc-100 text-sm font-medium">
+              {aiAttacked ? 'AI attacked you' : 'You attacked the AI'}
+            </div>
+          </div>
+        </div>
+
+        <div className="px-6 py-5 flex flex-col gap-4">
+          {/* Headline numbers */}
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <div className="text-[10px] uppercase tracking-wider font-mono text-zinc-500">Damage to {defenderLabel.toLowerCase()}</div>
+              <div className="font-mono font-bold text-3xl" style={{ color: defenderDamage > 0 ? '#f87171' : '#52525b' }}>
+                {defenderDamage}
+              </div>
+            </div>
+            <div className="flex-1">
+              <div className="text-[10px] uppercase tracking-wider font-mono text-zinc-500">Creatures killed</div>
+              <div className="font-mono font-bold text-3xl text-zinc-200">
+                {deadAttackers.length + deadBlockers.length}
+              </div>
+            </div>
+          </div>
+
+          {/* Per-attacker breakdown */}
+          {perAttackerLog.length > 0 && (
+            <div className="rounded-md border border-zinc-800/80 bg-zinc-950/60 divide-y divide-zinc-800/60">
+              {perAttackerLog.map((entry, i) => (
+                <div key={i} className="px-3 py-2 flex items-baseline gap-2 text-[12.5px]">
+                  <span className="text-zinc-100 font-medium">{entry.attacker}</span>
+                  <span className="text-zinc-400">{outcomePhrase(entry)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Dead lists */}
+          {(deadAttackers.length > 0 || deadBlockers.length > 0) && (
+            <div className="flex flex-col gap-1.5 text-[12px]">
+              {deadAttackers.length > 0 && (
+                <DeadRow
+                  label={`${aiAttacked ? "AI's" : 'Your'} dead attacker${deadAttackers.length === 1 ? '' : 's'}`}
+                  cards={deadAttackers}
+                />
+              )}
+              {deadBlockers.length > 0 && (
+                <DeadRow
+                  label={`${aiAttacked ? 'Your' : "AI's"} dead blocker${deadBlockers.length === 1 ? '' : 's'}`}
+                  cards={deadBlockers}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Nothing-happened note (purely informational so the user doesn't think nothing fired) */}
+          {defenderDamage === 0 && deadAttackers.length === 0 && deadBlockers.length === 0 && (
+            <div className="text-zinc-400 text-[12.5px] text-center py-2">
+              All attackers blocked harmlessly — no damage, no deaths.
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-zinc-800/80 flex justify-end">
+          <button
+            autoFocus
+            onClick={onClose}
+            className="px-4 py-2 rounded-md text-sm font-medium transition-all hover:brightness-110 active:scale-[0.98]"
+            style={{ background: accent, color: '#18181b' }}
+          >
+            OK (Esc)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeadRow({ label, cards }: { label: string; cards: Card[] }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="text-[10px] uppercase tracking-wider font-mono text-zinc-500 shrink-0">{label}</span>
+      <div className="flex flex-wrap gap-1.5">
+        {cards.map((c) => (
+          <span
+            key={c.id}
+            className="px-2 py-0.5 rounded text-zinc-300 font-mono text-[11px]"
+            style={{ background: 'rgba(63,63,70,0.55)', border: '1px solid rgba(255,255,255,0.04)' }}
+          >
+            {c.name}{c.pt ? ` (${c.pt})` : ''}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NewGameConfirmModal({
+  onClose,
+  onConfirm,
+}: {
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'Enter') onConfirm();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, onConfirm]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-[420px] rounded-xl overflow-hidden"
+        style={{
+          background: 'linear-gradient(180deg, #1c1c20, #131316)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08), 0 0 80px rgba(248,113,113,0.18)',
+          animation: 'popupIn 220ms cubic-bezier(.2,.9,.3,1.2)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-zinc-800/80 flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-md flex items-center justify-center font-mono text-xs font-bold"
+            style={{ background: '#f87171', color: '#18181b' }}
+          >
+            !
+          </div>
+          <div className="flex-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Start new game?</div>
+            <div className="text-zinc-100 text-sm font-medium">Your current game state will be wiped</div>
+          </div>
+        </div>
+        <div className="px-6 py-5 text-zinc-300 text-sm leading-relaxed">
+          Hands, battlefields, life totals, and the action log will all reset. This can't be undone.
+        </div>
+        <div className="px-6 py-4 border-t border-zinc-800/80 flex gap-2.5">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-medium transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            autoFocus
+            onClick={onConfirm}
+            className="flex-1 py-2.5 rounded-md text-sm font-medium transition-all hover:brightness-110 active:scale-[0.98]"
+            style={{ background: '#f87171', color: '#18181b' }}
+          >
+            Continue →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyHandNote({ text, accent }: { text: string; accent: string }) {
+  return (
+    <div
+      className="rounded-lg px-4 py-6 text-center text-zinc-300 text-[13px] leading-relaxed"
+      style={{ background: 'rgba(24,24,27,0.5)', border: `1px dashed ${accent}` }}
+    >
+      {text}
     </div>
   );
 }
@@ -759,7 +1562,7 @@ function DeckPill({ label, value }: { label: string; value: string | number }) {
 
 export function Battlefield() {
   const { state, dispatch } = useGame();
-  const { deck: persistedDeck } = useDeck();
+  const deckLib = useDeckLibrary();
 
   // UI-only state (not part of the game snapshot)
   const [voiceParsing, setVoiceParsing] = React.useState(false);
@@ -769,11 +1572,28 @@ export function Battlefield() {
   const [aiName, setAiName] = React.useState('Pyro the Reckless');
   const [zoomCard, setZoomCard] = React.useState<Card | null>(null);
   const [aiDeckId, setAiDeckId] = React.useState<string | null>(null);
-  const deckLib = useDeckLibrary();
+  const [humanDeckId, setHumanDeckId] = React.useState<string | null>(() => deckLib.activeId);
   const aiDeckCards = React.useMemo(
     () => (aiDeckId ? deckLib.decks.find((d) => d.id === aiDeckId)?.cards ?? [] : []),
     [aiDeckId, deckLib.decks],
   );
+  const humanDeckCards = React.useMemo(
+    () => (humanDeckId ? deckLib.decks.find((d) => d.id === humanDeckId)?.cards ?? [] : []),
+    [humanDeckId, deckLib.decks],
+  );
+  const [showHumanHand, setShowHumanHand] = React.useState(false);
+  const [showAiHand, setShowAiHand] = React.useState(false);
+  const [tokenModalSide, setTokenModalSide] = React.useState<'human' | 'ai' | null>(null);
+  const [confirmNewGame, setConfirmNewGame] = React.useState(false);
+  // Snapshot of the most recent combat result + the cards that died, kept so the popup can render
+  // names/PT after the cards have already been removed from the battlefield.
+  const [combatSummary, setCombatSummary] = React.useState<{
+    attackingSide: 'human' | 'ai';
+    defenderDamage: number;
+    deadAttackers: Card[];
+    deadBlockers: Card[];
+    perAttackerLog: { attacker: string; blocker?: string; outcome: 'hits' | 'trades' | 'kills' | 'dies' | 'clashes'; damage: number }[];
+  } | null>(null);
   const [density, setDensity] = React.useState<'normal' | 'compact'>('normal');
   const [aiNarration, setAiNarration] = React.useState("Your move. Let's see what you've got.");
   const [aiSpeaking, setAiSpeaking] = React.useState(false);
@@ -824,7 +1644,10 @@ export function Battlefield() {
   const blockerMap = state.blockerMap;
   const pickingBlockerFor = state.pickingBlockerFor;
   const humanLibrary = state.players.human.libraryCount;
-  const humanHandCount = state.players.human.handCount;
+  const humanHand = state.players.human.zones.hand;
+  const humanUntrackedHand = state.players.human.handCount;
+  /** Total cards in the human's hand — tracked Card[] plus untracked count-only physical cards. */
+  const humanHandCount = humanHand.length + humanUntrackedHand;
   const humanGraveyard = state.players.human.zones.graveyard.length;
   const humanExile = state.players.human.zones.exile.length;
 
@@ -849,15 +1672,23 @@ export function Battlefield() {
   // PlayBar handlers (per-player; the bar picks the player via the side toggle).
   const playCardToZone = (card: Card, zone: PlayZone, player: PlaySide) => {
     const tappedFlag = zone === 'battlefield' ? { tapped: false } : {};
-    if (player === 'human' && zone === 'hand') {
-      // Human's hand is a count only — don't track individual cards.
-      dispatch({ type: 'INC_HAND_COUNT', delta: 1 });
-    } else {
-      dispatch({ type: 'PLACE_CARD', player, zone, card: { ...card, ...tappedFlag } });
+    // Place the card. Both sides now track hand contents as cards (previously human hand was count-only).
+    dispatch({ type: 'PLACE_CARD', player, zone, card: { ...card, ...tappedFlag } });
+    // Auto-remove from the same player's tracked hand when playing somewhere else.
+    if (zone !== 'hand') {
+      const fromHand = state.players[player].zones.hand.find(
+        (h) => h.name.toLowerCase() === card.name.toLowerCase(),
+      );
+      if (fromHand) {
+        dispatch({ type: 'REMOVE_CARD', cardId: fromHand.id });
+      } else if (player === 'human' && state.players.human.handCount > 0) {
+        // Played a physical card that wasn't tracked individually — decrement the untracked count.
+        dispatch({ type: 'INC_HAND_COUNT', delta: -1 });
+      }
     }
-    // Adding to the AI's Hand is treated as "AI drew this card" — also bump library down by 1.
-    if (player === 'ai' && zone === 'hand') {
-      dispatch({ type: 'INC_LIBRARY_COUNT', player: 'ai', delta: -1 });
+    // Adding to either side's hand also bumps library down by 1 (a card came from the library).
+    if (zone === 'hand') {
+      dispatch({ type: 'INC_LIBRARY_COUNT', player, delta: -1 });
     }
     const isLand = /Land/i.test(card.type);
     const sideLabel = player === 'human' ? 'You' : 'AI';
@@ -866,12 +1697,68 @@ export function Battlefield() {
         [{ who: player, text: `${sideLabel} played ${card.name} (${isLand ? 'land' : 'spell'})` }, ...l].slice(0, 12),
       );
       if (player === 'human' && !isLand) speak(`${card.name}? Let me see…`, 1400);
-    } else if (zone === 'hand' && player === 'ai') {
-      setLog((l) => [{ who: player, text: `AI drew ${card.name}` }, ...l].slice(0, 12));
+    } else if (zone === 'hand') {
+      setLog((l) => [{ who: player, text: `${sideLabel} drew ${card.name}` }, ...l].slice(0, 12));
     } else {
       setLog((l) => [{ who: player, text: `${sideLabel}: ${card.name} → ${zone}` }, ...l].slice(0, 12));
     }
     setLastPlayed({ key: Date.now(), text: `+ ${card.name} → ${sideLabel}'s ${zone}` });
+  };
+
+  const createToken = ({
+    name,
+    pt,
+    type,
+    color,
+    side,
+  }: {
+    name: string;
+    pt: string;
+    type: string;
+    color: ManaColor;
+    side: 'human' | 'ai';
+  }) => {
+    const card: Card = {
+      id: `tok-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      cost: '',
+      type,
+      pt,
+      colors: [color],
+      rarity: 'common',
+      token: true,
+      tapped: false,
+    };
+    dispatch({ type: 'PLACE_CARD', player: side, zone: 'battlefield', card });
+    const sideLabel = side === 'human' ? 'You' : 'AI';
+    setLog((l) => [{ who: side, text: `${sideLabel} created ${name} ${pt} token` }, ...l].slice(0, 12));
+    setLastPlayed({ key: Date.now(), text: `Created ${name} (${pt}) token` });
+  };
+
+  const handleNewGameClick = () => {
+    // If a game is meaningfully in progress, confirm before wiping. Heuristic: past turn 1, or any
+    // battlefield/hand/graveyard activity. New player on turn 1 with empty board goes straight in.
+    const inProgress =
+      state.turnNumber > 1 ||
+      humanBoard.length > 0 ||
+      aiBoard.length > 0 ||
+      humanHand.length > 0 ||
+      aiHand.length > 0 ||
+      state.players.human.zones.graveyard.length > 0 ||
+      state.players.ai.zones.graveyard.length > 0;
+    if (inProgress) {
+      setConfirmNewGame(true);
+    } else {
+      setNewGameOpen(true);
+    }
+  };
+
+  const removeFromHand = (player: PlaySide, cardId: string) => {
+    const card = state.players[player].zones.hand.find((c) => c.id === cardId);
+    if (!card) return;
+    dispatch({ type: 'REMOVE_CARD', cardId });
+    const label = player === 'human' ? 'You' : 'AI';
+    setLog((l) => [{ who: player, text: `${label} removed ${card.name} from hand` }, ...l].slice(0, 12));
   };
 
   const drawCard = (player: PlaySide) => {
@@ -1073,13 +1960,16 @@ export function Battlefield() {
     const card = board.find((c) => c.id === id);
     if (!card) return;
 
-    if (combatStep === 'declare' && side === 'human' && /Creature/i.test(card.type)) {
+    const attackingSide = state.attackingSide;
+    const defendingSide: Player = attackingSide === 'human' ? 'ai' : 'human';
+
+    if (combatStep === 'declare' && side === attackingSide && /Creature/i.test(card.type)) {
       const isAttacker = attackers.includes(id);
       dispatch({ type: 'COMBAT_TOGGLE_ATTACKER', cardId: id });
       setLog((l) =>
         [
           {
-            who: 'human' as const,
+            who: attackingSide as 'ai' | 'human',
             text: `${isAttacker ? 'Removed' : 'Declared'} ${card.name} ${
               isAttacker ? 'from combat' : 'as attacker'
             }`,
@@ -1091,22 +1981,27 @@ export function Battlefield() {
     }
 
     if (combatStep === 'blockers') {
-      if (side === 'human' && attackers.includes(id)) {
+      // Click on an attacker (attacking side) → focus that attacker for blocker assignment.
+      if (side === attackingSide && attackers.includes(id)) {
         dispatch({ type: 'COMBAT_PICK_BLOCKER_FOR', attackerId: pickingBlockerFor === id ? null : id });
         return;
       }
-      if (side === 'ai' && /Creature/i.test(card.type)) {
+      // Click on a creature on the defending side → assign as blocker for the picked attacker.
+      if (side === defendingSide && /Creature/i.test(card.type)) {
         const existingAttacker = Object.entries(blockerMap).find(([, blk]) => blk === id);
         if (existingAttacker) {
           dispatch({ type: 'COMBAT_REMOVE_BLOCKER', blockerId: id });
-          setLog((l) => [{ who: 'ai' as const, text: `Removed ${card.name} from blocking` }, ...l].slice(0, 12));
+          setLog((l) =>
+            [{ who: defendingSide as 'ai' | 'human', text: `Removed ${card.name} from blocking` }, ...l].slice(0, 12),
+          );
           return;
         }
         if (pickingBlockerFor && !card.tapped) {
-          const attCard = humanBoard.find((c) => c.id === pickingBlockerFor);
+          const attackerBoard = state.players[attackingSide].zones.battlefield;
+          const attCard = attackerBoard.find((c) => c.id === pickingBlockerFor);
           dispatch({ type: 'COMBAT_ASSIGN_BLOCKER', attackerId: pickingBlockerFor, blockerId: id });
           setLog((l) =>
-            [{ who: 'ai' as const, text: `${card.name} blocks ${attCard ? attCard.name : ''}` }, ...l].slice(0, 12),
+            [{ who: defendingSide as 'ai' | 'human', text: `${card.name} blocks ${attCard ? attCard.name : ''}` }, ...l].slice(0, 12),
           );
           return;
         }
@@ -1125,24 +2020,40 @@ export function Battlefield() {
 
   const autoBlock = () => {
     dispatch({ type: 'COMBAT_AUTO_BLOCK' });
-    // Re-derive count after dispatch synchronously isn't possible here; estimate from current attackers.
-    const available = aiBoard.filter((c) => /Creature/i.test(c.type) && !c.tapped);
+    const defenderBoard = state.attackingSide === 'human' ? aiBoard : humanBoard;
+    const available = defenderBoard.filter((c) => /Creature/i.test(c.type) && !c.tapped);
     const count = Math.min(available.length, attackers.length);
-    setLog((l) => [{ who: 'ai' as const, text: `AI assigned ${count} blocker(s)` }, ...l].slice(0, 12));
+    const who: 'ai' | 'human' = state.attackingSide === 'human' ? 'ai' : 'human';
+    setLog((l) => [{ who, text: `Auto-assigned ${count} blocker(s)` }, ...l].slice(0, 12));
   };
 
   const skipBlockers = () => {
     dispatch({ type: 'COMBAT_SKIP_BLOCKERS' });
-    setLog((l) => [{ who: 'ai' as const, text: 'AI declines to block' }, ...l].slice(0, 12));
+    const who: 'ai' | 'human' = state.attackingSide === 'human' ? 'ai' : 'human';
+    setLog((l) => [{ who, text: 'No blockers — all damage will go through' }, ...l].slice(0, 12));
   };
 
   const resolveCombat = () => {
     const result = computeCombatResult(state);
+    const defenderLabel = state.attackingSide === 'human' ? 'AI' : 'You';
+    const attackerBoard = state.attackingSide === 'human' ? humanBoard : aiBoard;
+    const defenderBoardForLookup = state.attackingSide === 'human' ? aiBoard : humanBoard;
+    // Snapshot the killed cards by id BEFORE dispatch, so the result popup can display names/PT
+    // even though the cards will be moved out of the battlefield by COMBAT_APPLY_RESULT.
+    const deadAttackerCards = attackerBoard.filter((c) => result.deadAttackerIds.includes(c.id));
+    const deadBlockerCards = defenderBoardForLookup.filter((c) => result.deadBlockerIds.includes(c.id));
     dispatch({
       type: 'COMBAT_APPLY_RESULT',
-      aiDamage: result.aiDamage,
+      defenderDamage: result.defenderDamage,
       deadAttackerIds: result.deadAttackerIds,
       deadBlockerIds: result.deadBlockerIds,
+    });
+    setCombatSummary({
+      attackingSide: state.attackingSide,
+      defenderDamage: result.defenderDamage,
+      deadAttackers: deadAttackerCards,
+      deadBlockers: deadBlockerCards,
+      perAttackerLog: result.perAttackerLog,
     });
     const resolveLog = result.perAttackerLog.map((entry) => {
       if (entry.outcome === 'hits') return `${entry.attacker} hits for ${entry.damage}`;
@@ -1152,18 +2063,24 @@ export function Battlefield() {
     setLog((l) =>
       [
         {
-          who: 'human' as const,
-          text: `Combat: ${result.aiDamage} to AI, ${result.deadAttackerIds.length} dead, ${result.deadBlockerIds.length} AI dead`,
+          who: state.attackingSide as 'ai' | 'human',
+          text: `Combat: ${result.defenderDamage} to ${defenderLabel}, ${result.deadAttackerIds.length} attacker dead, ${result.deadBlockerIds.length} blocker dead`,
         },
-        ...resolveLog.slice(0, 3).reverse().map((t) => ({ who: 'human' as const, text: t })),
+        ...resolveLog.slice(0, 3).reverse().map((t) => ({ who: state.attackingSide as 'ai' | 'human', text: t })),
         ...l,
       ].slice(0, 12),
     );
 
-    if (result.aiDamage >= 5) speak(`Ouch. ${result.aiDamage} damage. I'm on the back foot.`, 2200);
-    else if (result.aiDamage === 0 && result.deadAttackerIds.length > 0) speak('Nice trade. Tempo win for me.', 1800);
-    else if (result.aiDamage > 0) speak(`${result.aiDamage} through. Acceptable.`, 1400);
-    else speak('Stalemate. We continue.', 1200);
+    if (state.attackingSide === 'human') {
+      if (result.defenderDamage >= 5) speak(`Ouch. ${result.defenderDamage} damage. I'm on the back foot.`, 2200);
+      else if (result.defenderDamage === 0 && result.deadAttackerIds.length > 0) speak('Nice trade. Tempo win for me.', 1800);
+      else if (result.defenderDamage > 0) speak(`${result.defenderDamage} through. Acceptable.`, 1400);
+      else speak('Stalemate. We continue.', 1200);
+    } else {
+      if (result.defenderDamage >= 5) speak(`That's ${result.defenderDamage} damage to you. Feel it?`, 2200);
+      else if (result.defenderDamage > 0) speak(`Through for ${result.defenderDamage}.`, 1400);
+      else speak('Well-blocked. We trade.', 1400);
+    }
   };
 
   const clearAttackers = () => {
@@ -1171,8 +2088,76 @@ export function Battlefield() {
     setLog((l) => [{ who: 'human' as const, text: 'Cleared attackers' }, ...l].slice(0, 12));
   };
 
+  // Auto-skip AI bookkeeping phases (Untap, End). The AI doesn't have a meaningful decision in these
+  // phases and forcing the user to manually click Next phase here was a major source of confusion.
+  // Draw is intentionally NOT skipped — the user still needs to log what the AI drew via the play bar.
+  React.useEffect(() => {
+    if (activeSide !== 'ai') return;
+    if (phase !== 'Untap' && phase !== 'End') return;
+    if (combatStep) return; // Don't advance while a combat resolution is pending.
+    if (popup) return; // Don't advance while a decision popup is up.
+    if (aiTaking) return; // Don't advance mid brain call.
+    const t = setTimeout(() => dispatch({ type: 'NEXT_PHASE' }), 250);
+    return () => clearTimeout(t);
+  }, [activeSide, phase, combatStep, popup, aiTaking, dispatch]);
+
+  // The "Take AI's turn" button is meaningful only when:
+  //   (1) it's the AI's turn, and
+  //   (2) we're in a phase where the AI normally decides something, and
+  //   (3) the human isn't mid-combat (combat UI takes priority).
+  // Untap/End auto-skip via effect. Draw is intentionally disabled — the user has to log the AI's draw.
+  const aiPhaseHasAction = ['Upkeep', 'Main 1', 'Combat', 'Main 2'].includes(phase);
+  const aiButtonDisabled = activeSide !== 'ai' || combatStep !== null || !aiPhaseHasAction;
+  const aiButtonDisabledReason: string =
+    activeSide !== 'ai'
+      ? `Waiting — your ${phase}`
+      : combatStep === 'declare'
+      ? 'Waiting — pick your attackers'
+      : combatStep === 'blockers'
+      ? state.attackingSide === 'ai'
+        ? 'Waiting — assign your blockers'
+        : 'Waiting — AI is blocking'
+      : phase === 'Draw'
+      ? 'Log AI\'s drawn card via the play bar (for: AI → Hand)'
+      : phase === 'Untap' || phase === 'End'
+      ? `${phase} — advancing…`
+      : `AI's ${phase}`;
+
+  const moveCard = (cardId: string, toZone: 'graveyard' | 'exile' | 'hand') => {
+    const allCards = [
+      ...state.players.human.zones.battlefield,
+      ...state.players.ai.zones.battlefield,
+    ];
+    const card = allCards.find((c) => c.id === cardId);
+    if (!card) return;
+    dispatch({ type: 'MOVE_CARD', cardId, toZone });
+    const owner: 'human' | 'ai' = state.players.human.zones.battlefield.some((c) => c.id === cardId) ? 'human' : 'ai';
+    const label = owner === 'human' ? 'You' : 'AI';
+    const verb = toZone === 'graveyard' ? 'sent to graveyard' : toZone === 'exile' ? 'exiled' : 'returned to hand';
+    setLog((l) => [{ who: owner, text: `${label}: ${card.name} ${verb}` }, ...l].slice(0, 12));
+  };
+
+  const adjustCounter = (cardId: string, kind: 'plusOne', delta: number) => {
+    const board = [...state.players.human.zones.battlefield, ...state.players.ai.zones.battlefield];
+    const card = board.find((c) => c.id === cardId);
+    if (!card) return;
+    dispatch({ type: 'ADJUST_COUNTER', cardId, kind, delta });
+    const current = card.counters?.[kind] ?? 0;
+    const next = Math.max(0, current + delta);
+    setLog((l) =>
+      [
+        {
+          who: state.players.human.zones.battlefield.some((c) => c.id === cardId) ? 'human' as const : 'ai' as const,
+          text: `${card.name} now has ${next} ${kind === 'plusOne' ? '+1/+1' : kind} counter${next === 1 ? '' : 's'}`,
+        },
+        ...l,
+      ].slice(0, 12),
+    );
+  };
+
   const approveAI = () => {
     if (!aiProposal) return;
+    const declaresAttackers = aiProposal.actions.some((a) => a.kind === 'ai_declare_attackers');
     const result = applyActions(aiProposal.actions, state, dispatch);
     const dmg = aiProposal.damage;
     setLog((l) =>
@@ -1186,10 +2171,22 @@ export function Battlefield() {
         ...l,
       ].slice(0, 12),
     );
-    speak(dmg > 0 ? `That's ${dmg} to you. Your turn.` : 'Move resolved. Your turn.', 1800);
+    // Persona line depends on what just happened — combat declaration needs the human to assign blockers next.
+    if (declaresAttackers) speak('I attack. Block if you can.', 1800);
+    else if (dmg > 0) speak(`That's ${dmg} to you. Your turn.`, 1800);
+    else speak('Move resolved. Your turn.', 1800);
     setPopup(false);
     setAiProposal(null);
     setAiError(null);
+
+    // Auto-advance the phase once the AI's decision is in. We skip this when:
+    //  - The AI declared attackers (combat UI now needs human blockers; COMBAT_APPLY_RESULT will advance later)
+    //  - It's no longer the AI's turn (e.g. mock proposal during human turn — defensive)
+    // Without this the user had to manually hit Next phase between Main 1 → Combat → Main 2, which is the
+    // primary source of the "wait, did the AI just pass?" confusion.
+    if (!declaresAttackers && state.activePlayer === 'ai') {
+      dispatch({ type: 'NEXT_PHASE' });
+    }
   };
   const rejectAI = () => {
     setLog((l) => [{ who: 'human' as const, text: 'Rejected AI proposal' }, ...l]);
@@ -1236,8 +2233,8 @@ export function Battlefield() {
 
   const speech = useSpeech({ onFinal: onTranscriptFinal });
 
-  // PlayBar autocomplete pulls from the saved deck if present; otherwise falls back to the sample.
-  const playBarDeck = persistedDeck.length > 0 ? persistedDeck : STARTER_DECK;
+  // PlayBar autocomplete pulls from the human's selected deck (or active library deck) — falls back to the sample.
+  const playBarDeck = humanDeckCards.length > 0 ? humanDeckCards : STARTER_DECK;
 
   return (
     <div className="h-full flex flex-col bg-zinc-950 relative overflow-hidden">
@@ -1259,6 +2256,13 @@ export function Battlefield() {
             <DeckPill label="Library" value={state.players.ai.libraryCount} />
             <DeckPill label="Graveyard" value={state.players.ai.zones.graveyard.length} />
             <DeckPill label="Exile" value={state.players.ai.zones.exile.length} />
+            <ShowHandButton
+              side="ai"
+              count={aiHand.length}
+              open={showAiHand}
+              onToggle={() => setShowAiHand((v) => !v)}
+            />
+            <CreateTokenButton side="ai" onClick={() => setTokenModalSide('ai')} />
           </div>
         </div>
 
@@ -1275,7 +2279,10 @@ export function Battlefield() {
               attackerIds={attackers}
               blockerMap={blockerMap}
               combatStep={combatStep}
+              attackingSide={state.attackingSide}
               pickingBlockerFor={pickingBlockerFor}
+              onAdjustCounter={adjustCounter}
+              onMoveCard={moveCard}
             />
           </div>
           <div className="w-[380px] shrink-0 flex flex-col gap-3 min-h-0">
@@ -1289,26 +2296,14 @@ export function Battlefield() {
               intent={aiIntent}
               active={activeSide === 'ai'}
               taking={aiTaking}
-              disabled={activeSide !== 'ai'}
-              disabledReason={
-                combatStep === 'declare'
-                  ? 'Waiting — pick your attackers'
-                  : combatStep === 'blockers'
-                  ? 'Waiting — assign blockers'
-                  : 'Waiting on your move'
+              disabled={aiButtonDisabled}
+              disabledReason={aiButtonDisabledReason}
+              takeTurnLabel={
+                phase === 'Combat' ? 'Declare AI attackers' : `Take AI ${phase}`
               }
               onTakeTurn={takeAITurn}
               onExplain={explainAI}
             />
-            <div className="min-h-0 flex-1 flex flex-col">
-              <HandZone
-                cards={aiHand}
-                onCardClick={() => {}}
-                onCardZoom={setZoomCard}
-                label="AI Hand (open)"
-                side="ai"
-              />
-            </div>
           </div>
         </div>
       </div>
@@ -1317,7 +2312,7 @@ export function Battlefield() {
         className="shrink-0 px-6 py-3 flex items-center gap-4 border-y border-zinc-800/80"
         style={{ background: 'linear-gradient(180deg, #0a0a0c 0%, #131316 50%, #0a0a0c 100%)' }}
       >
-        <PhaseIndicator phase={phase} turn={turn} onNext={nextPhase} />
+        <PhaseIndicator phase={phase} turn={turn} activeSide={activeSide} onNext={nextPhase} />
         <div className="flex-1 min-w-0">
           <ActionLog entries={log} />
         </div>
@@ -1339,11 +2334,16 @@ export function Battlefield() {
             Compact
           </button>
         </div>
+        <div className="w-px h-6 bg-zinc-800 mx-2" />
         <button
-          onClick={() => setNewGameOpen(true)}
-          className="px-3 py-1.5 rounded-md text-xs font-medium text-zinc-950 transition-all hover:brightness-110 active:scale-[0.98] flex items-center gap-1.5"
-          style={{ background: 'var(--accent)' }}
-          title="Start a new game from the deck library"
+          onClick={handleNewGameClick}
+          className="px-3 py-1.5 rounded-md text-xs font-medium transition-all hover:brightness-110 active:scale-[0.98] flex items-center gap-1.5"
+          style={{
+            background: 'rgba(248,113,113,0.14)',
+            color: '#f87171',
+            border: '1px solid rgba(248,113,113,0.35)',
+          }}
+          title="Start a new game (will confirm if a game is in progress)"
         >
           <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
             <path d="M2 6a4 4 0 0 1 7-2.65M10 6a4 4 0 0 1-7 2.65" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -1373,12 +2373,16 @@ export function Battlefield() {
               attackerIds={attackers}
               blockerMap={blockerMap}
               combatStep={combatStep}
+              attackingSide={state.attackingSide}
               pickingBlockerFor={pickingBlockerFor}
+              onAdjustCounter={adjustCounter}
+              onMoveCard={moveCard}
             />
             {combatStep && (
               <CombatBar
                 step={combatStep}
-                attackers={humanBoard.filter((c) => attackers.includes(c.id))}
+                attackingSide={state.attackingSide}
+                attackers={(state.attackingSide === 'human' ? humanBoard : aiBoard).filter((c) => attackers.includes(c.id))}
                 blockerMap={blockerMap}
                 aiBoard={aiBoard}
                 onContinueToBlockers={continueToBlockers}
@@ -1469,7 +2473,13 @@ export function Battlefield() {
             <DeckPill label="Library" value={humanLibrary} />
             <DeckPill label="Graveyard" value={humanGraveyard} />
             <DeckPill label="Exile" value={humanExile} />
-            <DeckPill label="Hand" value={humanHandCount} />
+            <ShowHandButton
+              side="human"
+              count={humanHandCount}
+              open={showHumanHand}
+              onToggle={() => setShowHumanHand((v) => !v)}
+            />
+            <CreateTokenButton side="human" onClick={() => setTokenModalSide('human')} />
           </div>
         </div>
       </div>
@@ -1507,12 +2517,66 @@ export function Battlefield() {
 
       <CardDetailModal card={zoomCard} onClose={() => setZoomCard(null)} />
 
+      {showAiHand && (
+        <HandOverlay
+          side="ai"
+          cards={aiHand}
+          count={aiHand.length}
+          anchor="top"
+          onClose={() => setShowAiHand(false)}
+          onCardZoom={setZoomCard}
+          onRemove={(id) => removeFromHand('ai', id)}
+        />
+      )}
+      {showHumanHand && (
+        <HandOverlay
+          side="human"
+          cards={humanHand}
+          count={humanHandCount}
+          untrackedCount={humanUntrackedHand}
+          anchor="bottom"
+          onClose={() => setShowHumanHand(false)}
+          onCardZoom={setZoomCard}
+          onRemove={(id) => removeFromHand('human', id)}
+        />
+      )}
+
+      {tokenModalSide && (
+        <CreateTokenModal
+          defaultSide={tokenModalSide}
+          onClose={() => setTokenModalSide(null)}
+          onCreate={createToken}
+        />
+      )}
+
+      {combatSummary && (
+        <CombatResultPopup
+          attackingSide={combatSummary.attackingSide}
+          defenderDamage={combatSummary.defenderDamage}
+          deadAttackers={combatSummary.deadAttackers}
+          deadBlockers={combatSummary.deadBlockers}
+          perAttackerLog={combatSummary.perAttackerLog}
+          onClose={() => setCombatSummary(null)}
+        />
+      )}
+
+      {confirmNewGame && (
+        <NewGameConfirmModal
+          onClose={() => setConfirmNewGame(false)}
+          onConfirm={() => {
+            setConfirmNewGame(false);
+            setNewGameOpen(true);
+          }}
+        />
+      )}
+
       <NewGameModal
         open={newGameOpen}
         onClose={() => setNewGameOpen(false)}
-        onStarted={({ aiName: name, aiDeckId: aiId }) => {
+        onStarted={({ aiName: name, aiDeckId: aiId, humanDeckId: humanId }) => {
           if (name) setAiName(name);
           setAiDeckId(aiId ?? null);
+          setHumanDeckId(humanId ?? null);
           // Wipe transient UI state so the fresh game starts clean.
           setPopup(false);
           setAiProposal(null);
