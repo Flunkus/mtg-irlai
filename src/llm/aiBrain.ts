@@ -85,9 +85,57 @@ OUTPUT
 - Be decisive: pick ONE concrete line, not a menu of options.
 - Reasons should be short and tactical (label + one sentence).
 - Keep summary plain-English; the human is a casual player, not a tournament grinder.
-- Damage field must be 0 unless this move deals damage to the human this turn.`;
+- Damage field must be 0 unless this move deals damage to the human this turn.
 
-export async function proposeAIMove(state: GameState): Promise<AIProposal> {
+SPOKEN LINE (read aloud — keep it tight)
+- The 'spokenLine' field is the ONLY thing the AI says out loud (via TTS).
+- Imagine a real human across the table making this play and announcing it. NOT a sportscaster narrating. NOT a summary of the proposal. Just what they'd actually mutter as they tap lands and slide a card forward.
+- One sentence, casual, ~6-15 words. In the persona's voice (Pyro = brash, Sage = dismissive, Warden = calm — whichever applies).
+- GOOD examples:
+    "Mountain, go."
+    "Pop two for Bolt, three to the face."
+    "Swing wide. Block if you can."
+    "Pass."
+    "Eidolon. You're on a clock now."
+    "Untap. Upkeep. Draw."
+    "Counter."
+- BAD examples (too long, too narrated, not natural):
+    "I will now attack with my Goblin Guide and Monastery Swiftspear, dealing a combined 4 damage to your life total."
+    "I am playing Lightning Bolt from my hand, targeting you and dealing 3 damage."
+    "Let me think carefully about this turn. I have several options available to me."
+- If the title is "Pass" or you're holding priority on a non-active turn, the spoken line is often just "Pass." or "Go." — a real player wouldn't narrate doing nothing.`;
+
+/**
+ * Optional persona hook. When provided, the persona's personalityPrompt is
+ * prepended to the system prompt under a clearly-marked === PERSONA === section
+ * so the brain plays in-character. The base rules below the persona block are
+ * NOT mutated — the persona only flavors play style, narration, and tone.
+ */
+export interface BrainPersona {
+  name: string;
+  archetypeLabel?: string;
+  personalityPrompt?: string;
+}
+
+function buildSystemPrompt(persona?: BrainPersona | null): string {
+  if (!persona || !persona.personalityPrompt?.trim()) return SYSTEM_PROMPT;
+  const header = [
+    '=== PERSONA ===',
+    `You are roleplaying as "${persona.name}"${persona.archetypeLabel ? ` — ${persona.archetypeLabel}` : ''}.`,
+    'The following defines your play style, voice, and tone. Speak in-character in all narration (title, summary, reasons).',
+    'Tactical decisions still follow the rules in the next section — the persona affects HOW you play, not which moves are legal.',
+    '',
+    persona.personalityPrompt.trim(),
+    '',
+    '=== BASE RULES ===',
+  ].join('\n');
+  return `${header}\n${SYSTEM_PROMPT}`;
+}
+
+export async function proposeAIMove(
+  state: GameState,
+  persona?: BrainPersona | null,
+): Promise<AIProposal> {
   const aiHand = await enrichWithOracle(state.players.ai.zones.hand);
   const aiBoard = await enrichWithOracle(state.players.ai.zones.battlefield);
 
@@ -118,7 +166,7 @@ export async function proposeAIMove(state: GameState): Promise<AIProposal> {
   ].join('\n');
 
   return await structuredCall({
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(persona),
     user: userPrompt,
     schema: AIProposalSchema,
   });

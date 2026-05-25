@@ -91,6 +91,16 @@ export const AIProposalSchema = z.object({
     .int()
     .min(0)
     .describe('Total damage this move deals to the human, for popup display. 0 if none.'),
+  spokenLine: z
+    .string()
+    .max(140)
+    .describe(
+      'What the persona would NATURALLY say OUT LOUD at the table while making this play. ' +
+        'Short — one sentence, ~6-15 words. Casual table-talk, not narration. ' +
+        'In the persona\'s voice and tone. Examples: "Mountain, go.", "Pop two for Bolt, three to the face.", ' +
+        '"Swing wide. Block if you can.", "Pass. Your move.", "Eidolon. You\'re on a clock now." ' +
+        'This is the ONLY line that will be read aloud via TTS, so make it count and keep it tight.',
+    ),
 });
 
 export type AIProposal = z.infer<typeof AIProposalSchema>;

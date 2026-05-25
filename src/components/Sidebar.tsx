@@ -1,7 +1,7 @@
 // Sidebar — vertical nav with logo, view switcher, JSON debug toggle, and tweaks gear.
 // Visual styling lifted verbatim from claude-design-mockup/MTG Trainer.html.
 
-type View = 'battlefield' | 'deck' | 'viewer';
+type View = 'battlefield' | 'deck' | 'viewer' | 'personas';
 
 interface SidebarProps {
   view: View;
@@ -37,12 +37,24 @@ function ViewerIcon() {
     </svg>
   );
 }
+function PersonaIcon() {
+  // Stylised hexagonal "face" badge — visually echoes the AIPersona panel hex avatar.
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <polygon points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="9.5" cy="11" r="1" fill="currentColor" />
+      <circle cx="14.5" cy="11" r="1" fill="currentColor" />
+      <path d="M9.5 15.5h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 export function Sidebar({ view, setView, onOpenTweaks, onToggleJson, jsonOpen }: SidebarProps) {
   const items: { id: View; label: string; icon: () => JSX.Element; hint: string }[] = [
-    { id: 'battlefield', label: 'Battlefield',  icon: BattleIcon, hint: 'Active game' },
-    { id: 'deck',        label: 'Deck Manager', icon: DeckIcon,   hint: '60-card lists' },
-    { id: 'viewer',      label: 'Card Viewer',  icon: ViewerIcon, hint: 'Look up any card' },
+    { id: 'battlefield', label: 'Battlefield',  icon: BattleIcon,   hint: 'Active game' },
+    { id: 'deck',        label: 'Deck Manager', icon: DeckIcon,     hint: '60-card lists' },
+    { id: 'personas',    label: 'Personas',     icon: PersonaIcon,  hint: 'AI opponents' },
+    { id: 'viewer',      label: 'Card Viewer',  icon: ViewerIcon,   hint: 'Look up any card' },
   ];
   return (
     <aside className="w-[72px] shrink-0 bg-zinc-950 border-r border-zinc-800/80 flex flex-col items-center py-4">
