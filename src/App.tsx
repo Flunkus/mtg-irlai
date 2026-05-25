@@ -8,6 +8,7 @@ import { CardViewer } from './views/CardViewer';
 import { TweaksPanel, TweakSection, TweakColor, useTweaks } from './components/TweaksPanel';
 import { GameProvider } from './state/gameStore';
 import { DeckLibraryProvider } from './state/deckLibrary';
+import { PersonaLibraryProvider } from './state/personaLibrary';
 import { JsonDebugPanel } from './components/JsonDebugPanel';
 
 const TWEAK_DEFAULTS = {
@@ -35,6 +36,7 @@ export default function App() {
 
   return (
     <DeckLibraryProvider>
+    <PersonaLibraryProvider>
     <GameProvider>
       <div className="h-screen flex flex-row bg-zinc-950">
         <Sidebar
@@ -69,6 +71,7 @@ export default function App() {
         <JsonDebugPanel open={jsonOpen} onClose={() => setJsonOpen(false)} />
       </div>
     </GameProvider>
+    </PersonaLibraryProvider>
     </DeckLibraryProvider>
   );
 }
