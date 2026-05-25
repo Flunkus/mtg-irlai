@@ -23,7 +23,7 @@ Three core ideas drive the design:
 - **Battlefield view** — Life counters, phase tracker, action log, both players' battlefields, AI's open hand, combat declaration UI (attackers + blockers with auto-blocker assignment), coach hints.
 - **Deck Manager** — Multi-deck library with editable names, deck switcher, duplicate / delete, **import** any standard MTG deck list (Arena, MTGO, Moxfield, plain), **export** to clipboard.
 - **AI Personas** — Save and switch between named AI opponents. Each persona has an archetype label, a personality prompt spliced into the AI brain's system prompt, and its own voice config (rate / pitch / system voice). Three starters are seeded on first run — Pyro the Reckless, Cerulean Sage, Verdant Warden. Pick a persona at game start from the New Game modal.
-- **AI voice (text-to-speech)** — When unmuted, the AI's narration is read aloud through the browser's native `speechSynthesis` API using the active persona's voice config. Speaker/mute toggle lives in the AI panel header and persists across reloads.
+- **AI voice (text-to-speech)** — When unmuted, the AI's narration is read aloud using the active persona's voice config. Two providers: the browser's native `speechSynthesis` (free, offline, OS voices) or **OpenAI `gpt-4o-mini-tts`** (paid, higher quality, accepts the persona's personality prompt as live tone steering). Switch between them anytime from Tweaks → AI voice. Speaker/mute toggle lives in the AI panel header.
 - **Card Viewer** — Look up any Magic card by name, set + collector number, or Scryfall UUID. Full art + Oracle text + metadata.
 - **AI Brain (Claude Sonnet 4.6)** — Reads the canonical game JSON and the AI's full Oracle text, proposes structured moves grounded in actual card rules. Phase-aware: passes appropriately on Untap/Draw/End, plays real moves on Main/Combat. Persona-flavored when one is active.
 - **Voice parser (Claude Haiku 4.5)** — Hold the mic button, speak a command ("tap two islands and send Snapcaster to the graveyard"), release. The transcript flows through structured output into actual state changes.
@@ -72,6 +72,16 @@ The AI brain and voice parser need an Anthropic API key. Without one, the brain 
 4. **Restart `npm run dev`** — Vite only reads env vars on boot, not on hot reload.
 
 **Security note:** the key is bundled into the browser at build time. That's fine for local single-user use; **do not deploy this app publicly with a real key embedded.**
+
+### Optional: better AI voice via OpenAI TTS
+
+By default the AI's narration is read aloud through the browser's native `speechSynthesis` — free, offline, but voice quality depends on what your OS ships. If you want noticeably better voices (plus persona-tone steering on `gpt-4o-mini-tts`), add an OpenAI key alongside the Anthropic one in `.env.local`:
+
+```
+VITE_OPENAI_API_KEY=sk-...
+```
+
+Restart `npm run dev`. Tweaks → AI voice will then default to **Auto (OpenAI)**, and you can switch back to **Browser (free, offline)** anytime from that same dropdown — no env edits required. Cost is tiny for personal use (~$0.60/min of generated audio, and AI lines average a few seconds). Same security caveat applies: don't deploy publicly with the key embedded.
 
 ### Cost
 
@@ -133,7 +143,9 @@ src/
 │   └── CardViewer.tsx         # Any-card lookup
 └── voice/
     ├── useSpeech.ts           # webkitSpeechRecognition hook (input)
-    ├── useTTS.ts              # window.speechSynthesis hook (output)
+    ├── useTTS.ts              # window.speechSynthesis hook (output, browser)
+    ├── useOpenAITTS.ts        # OpenAI /v1/audio/speech hook (output, paid)
+    ├── tts.tsx                # TTSPreferenceProvider + useTTS() selector (auto/browser/openai)
     └── parseVoice.ts          # Transcript → structured GameAction[] via Haiku
 claude-design-mockup/           # Original static design — reference only, do not edit
 ```
