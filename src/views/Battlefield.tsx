@@ -1585,6 +1585,22 @@ export function Battlefield() {
     () => (humanDeckId ? deckLib.decks.find((d) => d.id === humanDeckId)?.cards ?? [] : []),
     [humanDeckId, deckLib.decks],
   );
+  /** Catalogue of every unique card across the user's deck library — used as a PlayBar autocomplete
+   * fallback when a side has no specific deck assigned (e.g. the user picked "(none — empty)" in the
+   * New Game modal, or the previously-selected deck was deleted between games). Without this fallback
+   * the AI side autocomplete went completely dark, leaving the user to type freeform every time. */
+  const allDecksCatalogue = React.useMemo(() => {
+    const seen = new Set<string>();
+    const merged: Card[] = [];
+    for (const d of deckLib.decks) {
+      for (const c of d.cards) {
+        if (seen.has(c.name)) continue;
+        seen.add(c.name);
+        merged.push(c);
+      }
+    }
+    return merged;
+  }, [deckLib.decks]);
   const [showHumanHand, setShowHumanHand] = React.useState(false);
   const [showAiHand, setShowAiHand] = React.useState(false);
   const [tokenModalSide, setTokenModalSide] = React.useState<'human' | 'ai' | null>(null);
@@ -2316,7 +2332,23 @@ export function Battlefield() {
   const speech = useSpeech({ onFinal: onTranscriptFinal });
 
   // PlayBar autocomplete pulls from the human's selected deck (or active library deck) — falls back to the sample.
-  const playBarDeck = humanDeckCards.length > 0 ? humanDeckCards : STARTER_DECK;
+  // Autocomplete falls back through a small chain so the PlayBar never goes
+  // empty: specific-side deck → merged library catalogue → built-in STARTER_DECK.
+  // The same chain is applied symmetrically to both sides so the AI side stays
+  // usable even when the New Game modal has no AI deck picked (or the previously
+  // picked deck was deleted).
+  const playBarDeck =
+    humanDeckCards.length > 0
+      ? humanDeckCards
+      : allDecksCatalogue.length > 0
+      ? allDecksCatalogue
+      : STARTER_DECK;
+  const playBarAiDeck =
+    aiDeckCards.length > 0
+      ? aiDeckCards
+      : allDecksCatalogue.length > 0
+      ? allDecksCatalogue
+      : STARTER_DECK;
 
   return (
     <div className="h-full flex flex-col bg-zinc-950 relative overflow-hidden">
@@ -2540,7 +2572,7 @@ export function Battlefield() {
           </div>
           <PlayBar
             humanDeck={playBarDeck}
-            aiDeck={aiDeckCards}
+            aiDeck={playBarAiDeck}
             activePlayer={activeSide}
             onPlay={playCardToZone}
             onDraw={drawCard}
@@ -2660,8 +2692,11 @@ export function Battlefield() {
         onClose={() => setNewGameOpen(false)}
         onStarted={({ aiDeckId: aiId, humanDeckId: humanId, personaId }) => {
           if (personaId) personaLib.setActive(personaId);
-          setAiDeckId(aiId ?? null);
-          setHumanDeckId(humanId ?? null);
+          // `aiId || null` (not `?? null`) — the modal sends '' when the user picks the "(none — empty)"
+          // option; nullish coalescing would let that empty string through, ending up with a truthy-but-
+          // unresolvable id and an empty AI autocomplete. Coerce to null so the catalogue fallback kicks in.
+          setAiDeckId(aiId || null);
+          setHumanDeckId(humanId || null);
           // Wipe transient UI state so the fresh game starts clean.
           setPopup(false);
           setAiProposal(null);

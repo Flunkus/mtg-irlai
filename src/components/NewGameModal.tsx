@@ -31,11 +31,17 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
   const [activePlayer, setActivePlayer] = React.useState<'human' | 'ai'>('human');
 
   // Seed sensible defaults when the modal opens.
+  // We treat a stale id (set, but no longer present in the library — e.g. the deck was
+  // deleted between games) the same as empty: needs re-seeding. Without this, the modal
+  // carried the dead id over and the eventual game start propagated it into Battlefield,
+  // leaving the PlayBar's AI autocomplete with no usable deck.
   React.useEffect(() => {
     if (!open) return;
-    if (!humanDeckId && lib.activeId) setHumanDeckId(lib.activeId);
+    const humanDeckMissing = !humanDeckId || !lib.decks.some((d) => d.id === humanDeckId);
+    const aiDeckMissing = !aiDeckId || !lib.decks.some((d) => d.id === aiDeckId);
+    if (humanDeckMissing && lib.activeId) setHumanDeckId(lib.activeId);
     if (!personaId && personas.activeId) setPersonaId(personas.activeId);
-    if (!aiDeckId) {
+    if (aiDeckMissing) {
       // If the seeded persona has a defaultDeckId, prefer that; otherwise pick any deck that isn't the human's.
       const seededPersona =
         personas.personas.find((p) => p.id === (personaId || personas.activeId));
@@ -45,6 +51,7 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
         const second = lib.decks.find((d) => d.id !== lib.activeId);
         if (second) setAiDeckId(second.id);
         else if (lib.activeId) setAiDeckId(lib.activeId);
+        else setAiDeckId(''); // no decks at all — leave blank, the warning at the bottom kicks in
       }
     }
   }, [open, lib.activeId, lib.decks, humanDeckId, aiDeckId, personaId, personas.activeId, personas.personas]);
