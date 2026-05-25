@@ -11,6 +11,7 @@ import { HintCard, deriveHint } from '../components/HintCoach';
 import { PlayBar, type Zone as PlayZone, type Side as PlaySide } from '../components/PlayBar';
 import { useGame, computeCombatResult, type Player } from '../state/gameStore';
 import { useDeckLibrary } from '../state/deckLibrary';
+import { usePersonaLibrary } from '../state/personaLibrary';
 import { STARTER_DECK } from '../mocks/sampleDeck';
 import { PHASES, MANA_COLORS } from '../types';
 import type { Card, ManaColor } from '../types';
@@ -1563,13 +1564,15 @@ function DeckPill({ label, value }: { label: string; value: string | number }) {
 export function Battlefield() {
   const { state, dispatch } = useGame();
   const deckLib = useDeckLibrary();
+  const personaLib = usePersonaLibrary();
+  /** Active persona drives AI name, archetype label shown in the panel, voice config, and the brain's flavored prompt. */
+  const activePersona = personaLib.active;
 
   // UI-only state (not part of the game snapshot)
   const [voiceParsing, setVoiceParsing] = React.useState(false);
   const [voiceError, setVoiceError] = React.useState<string | null>(null);
   const [popup, setPopup] = React.useState(false);
   const [newGameOpen, setNewGameOpen] = React.useState(false);
-  const [aiName, setAiName] = React.useState('Pyro the Reckless');
   const [zoomCard, setZoomCard] = React.useState<Card | null>(null);
   const [aiDeckId, setAiDeckId] = React.useState<string | null>(null);
   const [humanDeckId, setHumanDeckId] = React.useState<string | null>(() => deckLib.activeId);
@@ -1912,7 +1915,16 @@ export function Battlefield() {
     speak('Let me think about this…', 2400);
     try {
       const proposal: AIProposal = isLLMConfigured()
-        ? await proposeAIMove(state)
+        ? await proposeAIMove(
+            state,
+            activePersona
+              ? {
+                  name: activePersona.name,
+                  archetypeLabel: activePersona.archetypeLabel,
+                  personalityPrompt: activePersona.personalityPrompt,
+                }
+              : null,
+          )
         : buildMockProposal();
       setAiTaking(false);
       setAiProposal(proposal);
@@ -2287,8 +2299,8 @@ export function Battlefield() {
           </div>
           <div className="w-[380px] shrink-0 flex flex-col gap-3 min-h-0">
             <AIPersona
-              name={aiName}
-              deck="Mono-Red Burn"
+              name={activePersona?.name ?? 'AI Opponent'}
+              deck={activePersona?.archetypeLabel ?? 'Generic AI'}
               mood={aiMood}
               narration={aiNarration}
               speaking={aiSpeaking}
@@ -2573,8 +2585,8 @@ export function Battlefield() {
       <NewGameModal
         open={newGameOpen}
         onClose={() => setNewGameOpen(false)}
-        onStarted={({ aiName: name, aiDeckId: aiId, humanDeckId: humanId }) => {
-          if (name) setAiName(name);
+        onStarted={({ aiDeckId: aiId, humanDeckId: humanId, personaId }) => {
+          if (personaId) personaLib.setActive(personaId);
           setAiDeckId(aiId ?? null);
           setHumanDeckId(humanId ?? null);
           // Wipe transient UI state so the fresh game starts clean.

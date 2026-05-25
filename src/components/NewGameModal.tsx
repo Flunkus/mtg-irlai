@@ -3,36 +3,63 @@
 
 import * as React from 'react';
 import { useDeckLibrary } from '../state/deckLibrary';
+import { usePersonaLibrary } from '../state/personaLibrary';
 import { useGame, buildNewGameState } from '../state/gameStore';
 
 interface NewGameModalProps {
   open: boolean;
   onClose: () => void;
   /** Notified after a successful reset so the host can clear its UI-only state (logs, popups). */
-  onStarted?: (opts: { aiName?: string; aiDeckId?: string; humanDeckId?: string }) => void;
+  onStarted?: (opts: {
+    aiName?: string;
+    aiDeckId?: string;
+    humanDeckId?: string;
+    personaId?: string;
+  }) => void;
 }
 
 export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
   const { dispatch } = useGame();
   const lib = useDeckLibrary();
+  const personas = usePersonaLibrary();
 
   const [humanDeckId, setHumanDeckId] = React.useState<string>('');
   const [aiDeckId, setAiDeckId] = React.useState<string>('');
   const [startingLife, setStartingLife] = React.useState(20);
   const [handSize, setHandSize] = React.useState(7);
-  const [aiName, setAiName] = React.useState('Pyro the Reckless');
+  const [personaId, setPersonaId] = React.useState<string>('');
   const [activePlayer, setActivePlayer] = React.useState<'human' | 'ai'>('human');
 
   // Seed sensible defaults when the modal opens.
   React.useEffect(() => {
     if (!open) return;
     if (!humanDeckId && lib.activeId) setHumanDeckId(lib.activeId);
+    if (!personaId && personas.activeId) setPersonaId(personas.activeId);
     if (!aiDeckId) {
-      const second = lib.decks.find((d) => d.id !== lib.activeId);
-      if (second) setAiDeckId(second.id);
-      else if (lib.activeId) setAiDeckId(lib.activeId);
+      // If the seeded persona has a defaultDeckId, prefer that; otherwise pick any deck that isn't the human's.
+      const seededPersona =
+        personas.personas.find((p) => p.id === (personaId || personas.activeId));
+      if (seededPersona?.defaultDeckId && lib.decks.some((d) => d.id === seededPersona.defaultDeckId)) {
+        setAiDeckId(seededPersona.defaultDeckId);
+      } else {
+        const second = lib.decks.find((d) => d.id !== lib.activeId);
+        if (second) setAiDeckId(second.id);
+        else if (lib.activeId) setAiDeckId(lib.activeId);
+      }
     }
-  }, [open, lib.activeId, lib.decks, humanDeckId, aiDeckId]);
+  }, [open, lib.activeId, lib.decks, humanDeckId, aiDeckId, personaId, personas.activeId, personas.personas]);
+
+  const persona = personas.personas.find((p) => p.id === personaId) ?? null;
+
+  // When the user picks a different persona mid-modal, jump the AI deck to that
+  // persona's default deck (if any) so the choice feels coupled.
+  const handlePersonaChange = (id: string) => {
+    setPersonaId(id);
+    const p = personas.personas.find((x) => x.id === id);
+    if (p?.defaultDeckId && lib.decks.some((d) => d.id === p.defaultDeckId)) {
+      setAiDeckId(p.defaultDeckId);
+    }
+  };
 
   if (!open) return null;
 
@@ -49,8 +76,11 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
       handSize,
       activePlayer,
     });
+    // Sync the persona library's active selection so Battlefield + the brain pick this persona up.
+    if (personaId) personas.setActive(personaId);
+    const aiName = persona?.name;
     dispatch({ type: 'RESET_GAME', state: newState, aiName });
-    onStarted?.({ aiName, aiDeckId, humanDeckId });
+    onStarted?.({ aiName, aiDeckId, humanDeckId, personaId: personaId || undefined });
     onClose();
   };
 
@@ -117,14 +147,35 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
 
           <div>
             <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1 font-mono">
-              AI opponent name
+              AI persona
             </label>
-            <input
-              type="text"
-              value={aiName}
-              onChange={(e) => setAiName(e.target.value)}
+            <select
+              value={personaId}
+              onChange={(e) => handlePersonaChange(e.target.value)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 text-base focus:outline-none focus:border-[var(--accent)] transition-colors"
-            />
+            >
+              <option value="">(none — generic AI)</option>
+              {personas.personas.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name || 'Untitled persona'}
+                </option>
+              ))}
+            </select>
+            {persona ? (
+              <div className="text-[11px] text-zinc-500 font-mono mt-1.5 leading-snug">
+                <span className="text-zinc-400">{persona.archetypeLabel || '—'}</span>
+                <span className="text-zinc-700"> · </span>
+                <span>
+                  voice {persona.voice.voiceName || 'default'} ·
+                  rate {persona.voice.rate.toFixed(2)} ·
+                  pitch {persona.voice.pitch.toFixed(2)}
+                </span>
+              </div>
+            ) : (
+              <div className="text-[11px] text-zinc-600 font-mono mt-1.5 leading-snug">
+                Manage personas from the sidebar → Personas to add personality and a voice.
+              </div>
+            )}
           </div>
 
           <div>
