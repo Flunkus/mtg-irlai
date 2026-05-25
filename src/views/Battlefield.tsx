@@ -1697,15 +1697,30 @@ export function Battlefield() {
   const personaInstructionsRef = React.useRef(activePersona?.personalityPrompt);
   personaInstructionsRef.current = activePersona?.personalityPrompt;
 
-  // Persona speech helper. The visual bubble + animation still drive the AIPersona panel;
-  // when TTS is supported and unmuted, the line is also read aloud in the persona's voice.
+  // Persona speech helpers.
   //
-  // We always pass both browser-side (voiceName/rate/pitch) and OpenAI-side
-  // (openAiVoice/instructions) options. The active TTS implementation ignores
-  // fields it doesn't understand, so flipping providers in the Tweaks panel is
-  // a one-click change with no further re-wiring.
+  //   narrate(text)       — VISUAL ONLY. Updates the speech bubble + animation.
+  //                         Free. Use for scripted UI reactions (card plays, combat events,
+  //                         "Let me think…" while the brain runs, etc).
+  //
+  //   speakOutLoud(text)  — VISUAL + AUDIBLE. Same bubble update PLUS a TTS call.
+  //                         Costs money on the OpenAI provider, so use it sparingly:
+  //                         currently only on proposal approval, with the LLM-generated
+  //                         proposal.spokenLine — the in-character table-talk the brain
+  //                         emits for the play it's about to execute.
+  //
+  // For TTS we always pass both browser-side (voiceName/rate/pitch) and OpenAI-side
+  // (openAiVoice/instructions) options. The active TTS implementation ignores fields
+  // it doesn't understand, so flipping providers in the Tweaks panel is a one-click
+  // change with no further re-wiring.
   const aiSpeakTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const speak = React.useCallback((text: string, duration = 1100) => {
+  const narrate = React.useCallback((text: string, duration = 1100) => {
+    setAiSpeaking(true);
+    setAiNarration(text);
+    if (aiSpeakTimer.current) clearTimeout(aiSpeakTimer.current);
+    aiSpeakTimer.current = setTimeout(() => setAiSpeaking(false), duration);
+  }, []);
+  const speakOutLoud = React.useCallback((text: string, duration = 1100) => {
     setAiSpeaking(true);
     setAiNarration(text);
     if (aiSpeakTimer.current) clearTimeout(aiSpeakTimer.current);
@@ -1749,7 +1764,7 @@ export function Battlefield() {
       setLog((l) =>
         [{ who: player, text: `${sideLabel} played ${card.name} (${isLand ? 'land' : 'spell'})` }, ...l].slice(0, 12),
       );
-      if (player === 'human' && !isLand) speak(`${card.name}? Let me see…`, 1400);
+      if (player === 'human' && !isLand) narrate(`${card.name}? Let me see…`, 1400);
     } else if (zone === 'hand') {
       setLog((l) => [{ who: player, text: `${sideLabel} drew ${card.name}` }, ...l].slice(0, 12));
     } else {
@@ -1817,7 +1832,7 @@ export function Battlefield() {
   const drawCard = (player: PlaySide) => {
     if (player === 'human') {
       if (humanLibrary <= 0) {
-        speak('Empty library. You lose on your next draw.', 2200);
+        narrate('Empty library. You lose on your next draw.', 2200);
         return;
       }
       dispatch({ type: 'INC_LIBRARY_COUNT', player: 'human', delta: -1 });
@@ -1881,9 +1896,9 @@ export function Battlefield() {
 
   React.useEffect(() => {
     if (phase === 'Combat' && activeSide === 'human') {
-      speak("I see what you're doing. Bring them.");
+      narrate("I see what you're doing. Bring them.");
     }
-  }, [phase, activeSide, speak]);
+  }, [phase, activeSide, narrate]);
 
   React.useEffect(() => {
     if (combatStep === 'blockers') {
@@ -1893,12 +1908,12 @@ export function Battlefield() {
         .filter((c) => !blockerMap[c.id])
         .reduce((s, c) => s + (parseInt(c.pt || '0') || 0), 0);
       if (unblockedPower >= aiLife) {
-        speak("That's… potentially lethal. I need to find blocks.", 1600);
+        narrate("That's… potentially lethal. I need to find blocks.", 1600);
       } else if (Object.keys(blockerMap).length === 0) {
-        speak('How am I supposed to block all of that?', 1400);
+        narrate('How am I supposed to block all of that?', 1400);
       }
     }
-  }, [combatStep, attackers, blockerMap, aiLife, humanBoard, speak]);
+  }, [combatStep, attackers, blockerMap, aiLife, humanBoard, narrate]);
 
   // ---- AI proposal ----
   // Fallback used when VITE_ANTHROPIC_API_KEY is missing — keeps the demo runnable.
@@ -1919,6 +1934,7 @@ export function Battlefield() {
           { label: 'Risk', detail: 'Trades off creatures but wins the game' },
           { label: 'Counters', detail: 'No removable threats from your hand' },
         ],
+        spokenLine: 'Swing for everything. GG.',
       };
     }
     if (aiCreatures.length > 0) {
@@ -1937,6 +1953,7 @@ export function Battlefield() {
           { label: 'Threats', detail: humanCreatures.length > 0 ? `${humanCreatures.length} blocker(s) on your side` : 'No defenders' },
           { label: 'Reserve', detail: 'One creature held for crackback' },
         ],
+        spokenLine: `Swing with ${aggro.length}. Holding the rest.`,
       };
     }
     return {
@@ -1950,6 +1967,7 @@ export function Battlefield() {
         { label: 'Pressure', detail: 'Future turns deal ~4 damage minimum' },
         { label: 'Risk', detail: 'Vulnerable to your counterspells' },
       ],
+      spokenLine: 'Mountain. Eidolon. Go.',
     };
   };
 
@@ -1957,12 +1975,12 @@ export function Battlefield() {
 
   const takeAITurn = async () => {
     if (activeSide !== 'ai') {
-      speak("It's your turn. Make a move and I'll respond.", 1600);
+      narrate("It's your turn. Make a move and I'll respond.", 1600);
       return;
     }
     setAiTaking(true);
     setAiError(null);
-    speak('Let me think about this…', 2400);
+    narrate('Let me think about this…', 2400);
     try {
       const proposal: AIProposal = isLLMConfigured()
         ? await proposeAIMove(
@@ -1978,7 +1996,7 @@ export function Battlefield() {
         : buildMockProposal();
       setAiTaking(false);
       setAiProposal(proposal);
-      speak(
+      narrate(
         `I'll ${
           proposal.title.toLowerCase().includes('lethal')
             ? 'go for the win'
@@ -1996,15 +2014,15 @@ export function Battlefield() {
       const msg = err instanceof Error ? err.message : 'AI brain failed';
       setAiError(msg);
       setPopup(true);
-      speak('Hmm. My brain hit a snag.', 1800);
+      narrate('Hmm. My brain hit a snag.', 1800);
     }
   };
 
   const explainAI = () => {
-    if (humanLife <= 8) speak("My read: you're low. I'm racing — burn over blocks.", 3000);
+    if (humanLife <= 8) narrate("My read: you're low. I'm racing — burn over blocks.", 3000);
     else if (humanBoard.filter((c) => /Creature/i.test(c.type)).length >= 3)
-      speak('You have a board. I need to remove threats before they swing.', 3000);
-    else speak('My read: 4 mana up means likely Counterspell. I want threats that survive.', 3200);
+      narrate('You have a board. I need to remove threats before they swing.', 3000);
+    else narrate('My read: 4 mana up means likely Counterspell. I want threats that survive.', 3200);
   };
 
   const nextPhase = () => {
@@ -2134,14 +2152,14 @@ export function Battlefield() {
     );
 
     if (state.attackingSide === 'human') {
-      if (result.defenderDamage >= 5) speak(`Ouch. ${result.defenderDamage} damage. I'm on the back foot.`, 2200);
-      else if (result.defenderDamage === 0 && result.deadAttackerIds.length > 0) speak('Nice trade. Tempo win for me.', 1800);
-      else if (result.defenderDamage > 0) speak(`${result.defenderDamage} through. Acceptable.`, 1400);
-      else speak('Stalemate. We continue.', 1200);
+      if (result.defenderDamage >= 5) narrate(`Ouch. ${result.defenderDamage} damage. I'm on the back foot.`, 2200);
+      else if (result.defenderDamage === 0 && result.deadAttackerIds.length > 0) narrate('Nice trade. Tempo win for me.', 1800);
+      else if (result.defenderDamage > 0) narrate(`${result.defenderDamage} through. Acceptable.`, 1400);
+      else narrate('Stalemate. We continue.', 1200);
     } else {
-      if (result.defenderDamage >= 5) speak(`That's ${result.defenderDamage} damage to you. Feel it?`, 2200);
-      else if (result.defenderDamage > 0) speak(`Through for ${result.defenderDamage}.`, 1400);
-      else speak('Well-blocked. We trade.', 1400);
+      if (result.defenderDamage >= 5) narrate(`That's ${result.defenderDamage} damage to you. Feel it?`, 2200);
+      else if (result.defenderDamage > 0) narrate(`Through for ${result.defenderDamage}.`, 1400);
+      else narrate('Well-blocked. We trade.', 1400);
     }
   };
 
@@ -2233,10 +2251,12 @@ export function Battlefield() {
         ...l,
       ].slice(0, 12),
     );
-    // Persona line depends on what just happened — combat declaration needs the human to assign blockers next.
-    if (declaresAttackers) speak('I attack. Block if you can.', 1800);
-    else if (dmg > 0) speak(`That's ${dmg} to you. Your turn.`, 1800);
-    else speak('Move resolved. Your turn.', 1800);
+    // THE ONLY audible (paid) TTS call in the whole flow — the brain emits a short
+    // in-character spokenLine for this play, and that's what gets read aloud. The
+    // visual bubble shows the same line; a duration scaled to the line length keeps
+    // the speaking indicator on long enough to feel natural.
+    const line = aiProposal.spokenLine?.trim() || 'Done. Your turn.';
+    speakOutLoud(line, Math.max(1400, Math.min(4500, line.length * 70)));
     setPopup(false);
     setAiProposal(null);
     setAiError(null);
@@ -2252,7 +2272,7 @@ export function Battlefield() {
   };
   const rejectAI = () => {
     setLog((l) => [{ who: 'human' as const, text: 'Rejected AI proposal' }, ...l]);
-    speak("Fine. I'll find another line.", 1600);
+    narrate("Fine. I'll find another line.", 1600);
     setPopup(false);
     setAiProposal(null);
     setAiError(null);
