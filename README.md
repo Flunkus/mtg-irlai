@@ -22,8 +22,10 @@ Three core ideas drive the design:
 
 - **Battlefield view** — Life counters, phase tracker, action log, both players' battlefields, AI's open hand, combat declaration UI (attackers + blockers with auto-blocker assignment), coach hints.
 - **Deck Manager** — Multi-deck library with editable names, deck switcher, duplicate / delete, **import** any standard MTG deck list (Arena, MTGO, Moxfield, plain), **export** to clipboard.
+- **AI Personas** — Save and switch between named AI opponents. Each persona has an archetype label, a personality prompt spliced into the AI brain's system prompt, and its own voice config (rate / pitch / system voice). Three starters are seeded on first run — Pyro the Reckless, Cerulean Sage, Verdant Warden. Pick a persona at game start from the New Game modal.
+- **AI voice (text-to-speech)** — When unmuted, the AI's narration is read aloud through the browser's native `speechSynthesis` API using the active persona's voice config. Speaker/mute toggle lives in the AI panel header and persists across reloads.
 - **Card Viewer** — Look up any Magic card by name, set + collector number, or Scryfall UUID. Full art + Oracle text + metadata.
-- **AI Brain (Claude Sonnet 4.6)** — Reads the canonical game JSON and the AI's full Oracle text, proposes structured moves grounded in actual card rules. Phase-aware: passes appropriately on Untap/Draw/End, plays real moves on Main/Combat.
+- **AI Brain (Claude Sonnet 4.6)** — Reads the canonical game JSON and the AI's full Oracle text, proposes structured moves grounded in actual card rules. Phase-aware: passes appropriately on Untap/Draw/End, plays real moves on Main/Combat. Persona-flavored when one is active.
 - **Voice parser (Claude Haiku 4.5)** — Hold the mic button, speak a command ("tap two islands and send Snapcaster to the graveyard"), release. The transcript flows through structured output into actual state changes.
 - **Set lock** — Pin a set code (e.g. `FIN`) so single-card entry and bulk paste accept bare collector numbers (`4 186`) without retyping the set.
 - **Real Scryfall card art** baked in for the default demo cards, and fetched on demand for anything you add.
@@ -102,14 +104,14 @@ src/
 ├── api/
 │   └── scryfall.ts            # Scryfall wrapper + bulk-line parser
 ├── components/
-│   ├── AIPersona.tsx          # AI opponent face + speech bubble + Take-turn button
+│   ├── AIPersona.tsx          # AI opponent face + speech bubble + Take-turn button + TTS mute toggle
 │   ├── CardDetailModal.tsx    # Zoom modal (art + full Oracle + metadata)
 │   ├── CardToken.tsx          # The universal card visual (xs/sm/md/lg)
 │   ├── HintCoach.tsx          # Contextual phase hints
 │   ├── JsonDebugPanel.tsx     # Live canonical JSON overlay
-│   ├── NewGameModal.tsx       # New game flow (decks + life + hand size)
+│   ├── NewGameModal.tsx       # New game flow (decks + life + hand size + persona)
 │   ├── PlayBar.tsx            # "Log a play" bar with You/AI side toggle
-│   ├── Sidebar.tsx            # Vertical nav (Battlefield/Deck/Card + Tweaks)
+│   ├── Sidebar.tsx            # Vertical nav (Battlefield/Deck/Personas/Card + Tweaks)
 │   └── TweaksPanel.tsx        # Floating Tweaks panel (accent color)
 ├── llm/                       # Shared LLM layer (brain + voice)
 │   ├── client.ts              # Anthropic client + structuredCall helper
@@ -121,14 +123,17 @@ src/
 ├── state/
 │   ├── gameStore.tsx          # Context + reducer + buildNewGameState + JSON projection
 │   ├── deckLibrary.tsx        # Multi-deck Provider + useDeckLibrary hook
+│   ├── personaLibrary.tsx     # Multi-persona Provider + usePersonaLibrary hook (seeds 3 starters)
 │   ├── deckStore.ts           # Compat shim: useDeck() over the active deck
 │   └── deckIO.ts              # parseDeckList() + exportDeckToList()
 ├── views/
 │   ├── Battlefield.tsx        # Main play view
 │   ├── DeckManager.tsx        # Library, import, export, set lock
+│   ├── PersonaManager.tsx     # Persona library editor (name / archetype / prompt / voice)
 │   └── CardViewer.tsx         # Any-card lookup
 └── voice/
-    ├── useSpeech.ts           # webkitSpeechRecognition hook
+    ├── useSpeech.ts           # webkitSpeechRecognition hook (input)
+    ├── useTTS.ts              # window.speechSynthesis hook (output)
     └── parseVoice.ts          # Transcript → structured GameAction[] via Haiku
 claude-design-mockup/           # Original static design — reference only, do not edit
 ```
@@ -158,9 +163,9 @@ See `CLAUDE.md` for AI-coding-session context (architecture deep dive, conventio
 
 ## Browser support
 
-- **Chromium-based (Chrome, Edge, Brave, Arc):** everything works, including voice.
-- **Firefox / Safari:** everything except voice. The mic button shows an inline "voice input not supported in this browser" hint.
-- **Mobile:** untested. The layout is desktop-oriented (fixed three-column structure). The card zoom modal is the only mobile-friendly affordance right now.
+- **Chromium-based (Chrome, Edge, Brave, Arc):** everything works — voice input (STT), voice output (TTS), and all UI.
+- **Firefox / Safari:** voice **output** (AI TTS narration) works fine — `speechSynthesis` is supported. Voice **input** (mic / `webkitSpeechRecognition`) is not; the mic button shows an inline "voice input not supported in this browser" hint.
+- **Mobile:** untested. The layout is desktop-oriented (fixed three-column structure). The card zoom modal is the only mobile-friendly affordance right now. Note iOS Safari requires a user gesture before TTS plays for the first time.
 
 ---
 
