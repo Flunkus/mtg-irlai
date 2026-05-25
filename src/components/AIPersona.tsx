@@ -221,6 +221,12 @@ interface AIPersonaProps {
   disabledReason?: string;
   /** Label shown on the Take Turn button. Defaults to "Take turn"; pass a phase-aware string for clarity. */
   takeTurnLabel?: string;
+  /** TTS mute state. When undefined the mute toggle is hidden. */
+  ttsMuted?: boolean;
+  /** Toggle TTS mute. Required for the toggle to render. */
+  onToggleMute?: () => void;
+  /** When false (TTS unsupported), the toggle becomes a passive "no audio" indicator. */
+  ttsSupported?: boolean;
 }
 
 export function AIPersona({
@@ -238,9 +244,13 @@ export function AIPersona({
   disabled,
   disabledReason,
   takeTurnLabel,
+  ttsMuted,
+  onToggleMute,
+  ttsSupported,
 }: AIPersonaProps) {
   const m = AI_MOODS[mood] || AI_MOODS.neutral;
   const isDisabled = disabled || taking;
+  const showMuteToggle = onToggleMute !== undefined;
   return (
     <div
       className="rounded-xl overflow-hidden"
@@ -257,7 +267,17 @@ export function AIPersona({
         <AIFace mood={mood} speaking={speaking} size={88} />
         <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-zinc-500">opponent</div>
+            <div className="flex items-center gap-2">
+              <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-zinc-500 flex-1">opponent</div>
+              {showMuteToggle && (
+                <MuteToggle
+                  muted={!!ttsMuted}
+                  supported={ttsSupported !== false}
+                  onToggle={onToggleMute!}
+                  accent={m.color}
+                />
+              )}
+            </div>
             <div className="text-zinc-50 text-base font-medium leading-tight mt-0.5 truncate">{name}</div>
             <div className="text-zinc-500 text-[11px] font-mono mt-0.5 truncate">{deck}</div>
           </div>
@@ -341,5 +361,67 @@ export function AIPersona({
         </button>
       </div>
     </div>
+  );
+}
+
+function MuteToggle({
+  muted,
+  supported,
+  onToggle,
+  accent,
+}: {
+  muted: boolean;
+  supported: boolean;
+  onToggle: () => void;
+  accent: string;
+}) {
+  const title = !supported
+    ? 'Text-to-speech not supported in this browser'
+    : muted
+    ? 'Unmute AI voice'
+    : 'Mute AI voice';
+  const color = !supported ? '#52525b' : muted ? '#71717a' : accent;
+  return (
+    <button
+      onClick={onToggle}
+      disabled={!supported}
+      title={title}
+      aria-label={title}
+      aria-pressed={muted}
+      className="w-6 h-6 rounded-md flex items-center justify-center transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+      style={{ color }}
+    >
+      {muted || !supported ? (
+        // Speaker with X
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M2 6v4h2.5L8 13V3L4.5 6H2z"
+            fill="currentColor"
+            stroke="currentColor"
+            strokeWidth="0.8"
+            strokeLinejoin="round"
+          />
+          <path d="M11 6l4 4M15 6l-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+      ) : (
+        // Speaker with waves
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M2 6v4h2.5L8 13V3L4.5 6H2z"
+            fill="currentColor"
+            stroke="currentColor"
+            strokeWidth="0.8"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M10.5 5.5a3 3 0 0 1 0 5M12.5 3.5a6 6 0 0 1 0 9"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            fill="none"
+          />
+        </svg>
+      )}
+    </button>
   );
 }

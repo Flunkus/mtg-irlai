@@ -20,6 +20,7 @@ import { applyActions } from '../llm/applyActions';
 import { isLLMConfigured } from '../llm/client';
 import type { AIProposal as LLMProposal } from '../llm/actionSchemas';
 import { useSpeech } from '../voice/useSpeech';
+import { useTTS } from '../voice/useTTS';
 import { parseVoiceTranscript } from '../voice/parseVoice';
 import { NewGameModal } from '../components/NewGameModal';
 
@@ -1663,13 +1664,49 @@ export function Battlefield() {
     [dispatch],
   );
 
-  // Persona speech helper
+  // ── TTS ────────────────────────────────────────────────────────────
+  // Audible AI narration. The visual speech bubble below is unchanged; TTS is additive.
+  const tts = useTTS();
+  const [ttsMuted, setTtsMuted] = React.useState<boolean>(() => {
+    try {
+      return localStorage.getItem('mtg.ttsMuted.v1') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleMute = React.useCallback(() => {
+    setTtsMuted((m) => {
+      const next = !m;
+      try {
+        localStorage.setItem('mtg.ttsMuted.v1', next ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      if (next) tts.cancel();
+      return next;
+    });
+  }, [tts]);
+
+  // Stable refs so `speak` itself doesn't re-create on every render (it's a useCallback dep elsewhere).
+  const ttsRef = React.useRef(tts);
+  ttsRef.current = tts;
+  const ttsMutedRef = React.useRef(ttsMuted);
+  ttsMutedRef.current = ttsMuted;
+  const personaVoiceRef = React.useRef(activePersona?.voice);
+  personaVoiceRef.current = activePersona?.voice;
+
+  // Persona speech helper. The visual bubble + animation still drive the AIPersona panel;
+  // when TTS is supported and unmuted, the line is also read aloud in the persona's voice.
   const aiSpeakTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const speak = React.useCallback((text: string, duration = 1100) => {
     setAiSpeaking(true);
     setAiNarration(text);
     if (aiSpeakTimer.current) clearTimeout(aiSpeakTimer.current);
     aiSpeakTimer.current = setTimeout(() => setAiSpeaking(false), duration);
+    if (!ttsMutedRef.current && ttsRef.current.supported) {
+      const v = personaVoiceRef.current;
+      ttsRef.current.speak(text, v ? { voiceName: v.voiceName, rate: v.rate, pitch: v.pitch } : undefined);
+    }
   }, []);
 
   // PlayBar handlers (per-player; the bar picks the player via the side toggle).
@@ -2315,6 +2352,9 @@ export function Battlefield() {
               }
               onTakeTurn={takeAITurn}
               onExplain={explainAI}
+              ttsMuted={ttsMuted}
+              ttsSupported={tts.supported}
+              onToggleMute={toggleMute}
             />
           </div>
         </div>
