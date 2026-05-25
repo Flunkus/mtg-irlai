@@ -80,9 +80,17 @@ export function PersonaManager() {
                 const isActive = p.id === lib.activeId;
                 return (
                   <li key={p.id}>
-                    <button
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => lib.setActive(p.id)}
-                      className="group w-full text-left px-5 py-2.5 flex items-center gap-3 transition-colors hover:bg-zinc-900"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          lib.setActive(p.id);
+                        }
+                      }}
+                      className="group w-full text-left px-5 py-2.5 flex items-center gap-3 transition-colors hover:bg-zinc-900 cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
                       style={{
                         background: isActive ? 'rgba(160,120,255,0.08)' : 'transparent',
                         borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,
@@ -111,7 +119,7 @@ export function PersonaManager() {
                           <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
                         </svg>
                       </button>
-                    </button>
+                    </div>
                   </li>
                 );
               })}
