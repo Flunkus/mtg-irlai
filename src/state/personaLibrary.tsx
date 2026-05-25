@@ -10,11 +10,13 @@ import * as React from 'react';
 const LIBRARY_KEY = 'mtg.personaLibrary.v1';
 
 export interface PersonaVoice {
-  /** Display name from speechSynthesis.getVoices(). Optional — falls back to default voice. */
+  /** Browser TTS voice: display name from speechSynthesis.getVoices(). Optional — falls back to default voice. */
   voiceName?: string;
-  /** 0.5–2, default 1. */
+  /** OpenAI TTS voice id (alloy, echo, onyx, …). Used only when the OpenAI TTS provider is active. */
+  openAiVoice?: string;
+  /** 0.5–2, default 1. Browser TTS only — OpenAI voices have fixed prosody (use personalityPrompt for tone). */
   rate: number;
-  /** 0–2, default 1. */
+  /** 0–2, default 1. Browser TTS only. */
   pitch: number;
 }
 
@@ -57,7 +59,7 @@ function seedStarters(): Persona[] {
         'When you speak (in narration / summary / reasons), you sound like a goblin pyromaniac who already wrote the obituary. Use phrases like "burn it down", "face is the place", "tick tock".',
         'Strategy bias: prefer face damage over creature removal. Hold burn for the kill, but cast it at face if the race demands. Trade creatures eagerly when it advances damage.',
       ].join('\n'),
-      voice: { rate: 1.15, pitch: 1.1 },
+      voice: { rate: 1.15, pitch: 1.1, openAiVoice: 'ash' },
       createdAt: now,
       updatedAt: now,
     },
@@ -72,7 +74,7 @@ function seedStarters(): Persona[] {
         'When you speak, use phrases like "as expected", "noted", "interesting choice — for you". Never raise your voice.',
         'Strategy bias: always hold mana up for counters during the opponent\'s turn. Pass priority on your own main phases if no proactive play is strictly better than holding interaction.',
       ].join('\n'),
-      voice: { rate: 0.9, pitch: 0.95 },
+      voice: { rate: 0.9, pitch: 0.95, openAiVoice: 'sage' },
       createdAt: now + 1,
       updatedAt: now + 1,
     },
@@ -87,7 +89,7 @@ function seedStarters(): Persona[] {
         'When you speak, use phrases like "the forest grows", "patience", "they fall in turn". Refer to your creatures with respect.',
         'Strategy bias: ramp first, threats second, removal only when necessary. Attack with everything that has good combat math; hold creatures back only if a clear trade or chump-block is needed.',
       ].join('\n'),
-      voice: { rate: 0.95, pitch: 0.9 },
+      voice: { rate: 0.95, pitch: 0.9, openAiVoice: 'onyx' },
       createdAt: now + 2,
       updatedAt: now + 2,
     },

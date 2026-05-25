@@ -214,6 +214,41 @@ export function TweakText({
   );
 }
 
+export function TweakSelect<T extends string>({
+  label,
+  value,
+  options,
+  hint,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string; disabled?: boolean }[];
+  hint?: React.ReactNode;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <TweakRow label={label}>
+      <select
+        className="twk-field"
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {hint && (
+        <div style={{ fontSize: 10.5, color: 'rgba(41,38,27,.55)', marginTop: 2, lineHeight: 1.35 }}>
+          {hint}
+        </div>
+      )}
+    </TweakRow>
+  );
+}
+
 function __twkIsLight(hex: string): boolean {
   const h = String(hex).replace('#', '');
   const x = h.length === 3 ? h.replace(/./g, (c) => c + c) : h.padEnd(6, '0');

@@ -7,7 +7,7 @@
 import * as React from 'react';
 import { usePersonaLibrary, type Persona } from '../state/personaLibrary';
 import { useDeckLibrary } from '../state/deckLibrary';
-import { useTTS } from '../voice/useTTS';
+import { useTTS } from '../voice/tts';
 
 export function PersonaManager() {
   const lib = usePersonaLibrary();
@@ -34,10 +34,13 @@ export function PersonaManager() {
 
   const previewVoice = (p: Persona) => {
     if (!tts.supported) return;
-    tts.speak(
-      `Hello. I'm ${p.name}. I play ${p.archetypeLabel}.`,
-      { voiceName: p.voice.voiceName, rate: p.voice.rate, pitch: p.voice.pitch },
-    );
+    tts.speak(`Hello. I'm ${p.name}. I play ${p.archetypeLabel}.`, {
+      voiceName: p.voice.voiceName,
+      rate: p.voice.rate,
+      pitch: p.voice.pitch,
+      openAiVoice: p.voice.openAiVoice,
+      instructions: p.personalityPrompt,
+    });
   };
 
   return (
@@ -160,6 +163,7 @@ export function PersonaManager() {
             ttsSupported={tts.supported}
             ttsSpeaking={tts.speaking}
             voices={tts.voices}
+            provider={tts.provider}
           />
         )}
       </main>
@@ -185,7 +189,8 @@ interface PersonaEditorProps {
   onCancelPreview: () => void;
   ttsSupported: boolean;
   ttsSpeaking: boolean;
-  voices: SpeechSynthesisVoice[];
+  voices: import('../voice/useTTS').TTSVoice[];
+  provider: import('../voice/useTTS').TTSProvider;
 }
 
 function PersonaEditor({
@@ -197,9 +202,11 @@ function PersonaEditor({
   ttsSupported,
   ttsSpeaking,
   voices,
+  provider,
 }: PersonaEditorProps) {
   const setVoice = (patch: Partial<Persona['voice']>) =>
     onUpdate({ voice: { ...persona.voice, ...patch } });
+  const isOpenAI = provider === 'openai';
 
   return (
     <>
@@ -241,7 +248,10 @@ function PersonaEditor({
         {/* Voice config */}
         <section>
           <div className="flex items-baseline justify-between mb-2">
-            <FieldLabel>Voice</FieldLabel>
+            <div className="flex items-center gap-2">
+              <FieldLabel>Voice</FieldLabel>
+              <ProviderBadge provider={provider} />
+            </div>
             <button
               onClick={ttsSpeaking ? onCancelPreview : onPreviewVoice}
               disabled={!ttsSupported}
@@ -251,7 +261,7 @@ function PersonaEditor({
                 color: ttsSpeaking ? '#f87171' : 'var(--accent)',
                 border: `1px solid ${ttsSpeaking ? 'rgba(248,113,113,0.35)' : 'var(--accent-glow)'}`,
               }}
-              title={ttsSupported ? 'Speak a sample line' : 'Text-to-speech not supported in this browser'}
+              title={ttsSupported ? 'Speak a sample line' : 'Text-to-speech not supported / not configured'}
             >
               {ttsSpeaking ? '■ Stop' : '▶ Preview'}
             </button>
@@ -265,46 +275,72 @@ function PersonaEditor({
                 border: '1px solid rgba(248,113,113,0.30)',
               }}
             >
-              Text-to-speech is unavailable in this browser. Voice config is saved but won't play here.
+              {isOpenAI
+                ? 'OpenAI TTS unavailable: set VITE_OPENAI_API_KEY in .env.local, or switch to Browser in Tweaks.'
+                : "Text-to-speech is unavailable in this browser. Voice config is saved but won't play here."}
             </div>
           )}
           <div className="space-y-3">
-            <div>
-              <SubLabel>Voice</SubLabel>
-              <select
-                value={persona.voice.voiceName ?? ''}
-                onChange={(e) => setVoice({ voiceName: e.target.value || undefined })}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
-              >
-                <option value="">(default system voice)</option>
-                {voices.map((v) => (
-                  <option key={`${v.voiceURI}-${v.name}`} value={v.name}>
-                    {v.name} {v.lang ? `— ${v.lang}` : ''}
-                  </option>
-                ))}
-              </select>
-              <div className="text-[10px] text-zinc-600 font-mono mt-1">
-                Available voices depend on the user's OS / browser ({voices.length} found).
+            {isOpenAI ? (
+              <div>
+                <SubLabel>OpenAI voice</SubLabel>
+                <select
+                  value={persona.voice.openAiVoice ?? ''}
+                  onChange={(e) => setVoice({ openAiVoice: e.target.value || undefined })}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+                >
+                  <option value="">(default — alloy)</option>
+                  {voices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-[10px] text-zinc-600 font-mono mt-1 leading-snug">
+                  Using <span className="text-zinc-400">gpt-4o-mini-tts</span> — your personality prompt is passed as
+                  tone steering. Rate/pitch sliders are browser-only.
+                </div>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <SliderField
-                label="Rate"
-                value={persona.voice.rate}
-                min={0.5}
-                max={2}
-                step={0.05}
-                onChange={(rate) => setVoice({ rate })}
-              />
-              <SliderField
-                label="Pitch"
-                value={persona.voice.pitch}
-                min={0}
-                max={2}
-                step={0.05}
-                onChange={(pitch) => setVoice({ pitch })}
-              />
-            </div>
+            ) : (
+              <>
+                <div>
+                  <SubLabel>Browser voice</SubLabel>
+                  <select
+                    value={persona.voice.voiceName ?? ''}
+                    onChange={(e) => setVoice({ voiceName: e.target.value || undefined })}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-2.5 py-2 text-zinc-100 text-sm focus:outline-none focus:border-[var(--accent)] transition-colors"
+                  >
+                    <option value="">(default system voice)</option>
+                    {voices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label} {v.lang ? `— ${v.lang}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="text-[10px] text-zinc-600 font-mono mt-1">
+                    Available voices depend on the user's OS / browser ({voices.length} found).
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <SliderField
+                    label="Rate"
+                    value={persona.voice.rate}
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    onChange={(rate) => setVoice({ rate })}
+                  />
+                  <SliderField
+                    label="Pitch"
+                    value={persona.voice.pitch}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    onChange={(pitch) => setVoice({ pitch })}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </section>
 
@@ -349,6 +385,23 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
     <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-mono mb-1">
       {children}
     </div>
+  );
+}
+
+function ProviderBadge({ provider }: { provider: import('../voice/useTTS').TTSProvider }) {
+  const isOpenAI = provider === 'openai';
+  return (
+    <span
+      className="px-1.5 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider"
+      style={{
+        background: isOpenAI ? 'rgba(34,197,94,0.14)' : 'rgba(160,120,255,0.14)',
+        color: isOpenAI ? '#22c55e' : 'var(--accent)',
+        border: `1px solid ${isOpenAI ? 'rgba(34,197,94,0.32)' : 'var(--accent-glow)'}`,
+      }}
+      title="Active TTS provider — change in Tweaks panel"
+    >
+      {isOpenAI ? 'OpenAI' : 'Browser'}
+    </span>
   );
 }
 

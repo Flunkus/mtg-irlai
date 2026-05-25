@@ -20,7 +20,7 @@ import { applyActions } from '../llm/applyActions';
 import { isLLMConfigured } from '../llm/client';
 import type { AIProposal as LLMProposal } from '../llm/actionSchemas';
 import { useSpeech } from '../voice/useSpeech';
-import { useTTS } from '../voice/useTTS';
+import { useTTS } from '../voice/tts';
 import { parseVoiceTranscript } from '../voice/parseVoice';
 import { NewGameModal } from '../components/NewGameModal';
 
@@ -1694,9 +1694,16 @@ export function Battlefield() {
   ttsMutedRef.current = ttsMuted;
   const personaVoiceRef = React.useRef(activePersona?.voice);
   personaVoiceRef.current = activePersona?.voice;
+  const personaInstructionsRef = React.useRef(activePersona?.personalityPrompt);
+  personaInstructionsRef.current = activePersona?.personalityPrompt;
 
   // Persona speech helper. The visual bubble + animation still drive the AIPersona panel;
   // when TTS is supported and unmuted, the line is also read aloud in the persona's voice.
+  //
+  // We always pass both browser-side (voiceName/rate/pitch) and OpenAI-side
+  // (openAiVoice/instructions) options. The active TTS implementation ignores
+  // fields it doesn't understand, so flipping providers in the Tweaks panel is
+  // a one-click change with no further re-wiring.
   const aiSpeakTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const speak = React.useCallback((text: string, duration = 1100) => {
     setAiSpeaking(true);
@@ -1705,7 +1712,13 @@ export function Battlefield() {
     aiSpeakTimer.current = setTimeout(() => setAiSpeaking(false), duration);
     if (!ttsMutedRef.current && ttsRef.current.supported) {
       const v = personaVoiceRef.current;
-      ttsRef.current.speak(text, v ? { voiceName: v.voiceName, rate: v.rate, pitch: v.pitch } : undefined);
+      ttsRef.current.speak(text, {
+        voiceName: v?.voiceName,
+        rate: v?.rate,
+        pitch: v?.pitch,
+        openAiVoice: v?.openAiVoice,
+        instructions: personaInstructionsRef.current,
+      });
     }
   }, []);
 
