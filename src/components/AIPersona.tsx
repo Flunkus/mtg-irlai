@@ -219,6 +219,8 @@ interface AIPersonaProps {
   taking?: boolean;
   disabled?: boolean;
   disabledReason?: string;
+  /** Label shown on the Take Turn button. Defaults to "Take turn"; pass a phase-aware string for clarity. */
+  takeTurnLabel?: string;
 }
 
 export function AIPersona({
@@ -235,6 +237,7 @@ export function AIPersona({
   taking,
   disabled,
   disabledReason,
+  takeTurnLabel,
 }: AIPersonaProps) {
   const m = AI_MOODS[mood] || AI_MOODS.neutral;
   const isDisabled = disabled || taking;
@@ -324,7 +327,7 @@ export function AIPersona({
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
                   <path d="M2 1l6 4-6 4z" />
                 </svg>
-                Take turn
+                {takeTurnLabel || 'Take turn'}
               </>
             )}
           </button>

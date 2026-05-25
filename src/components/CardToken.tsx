@@ -99,6 +99,22 @@ export function CardToken({
     mythic:   '#e07b3a',
   } as const)[card.rarity || 'common'];
 
+  // Effective P/T: apply +1/+1 and -1/-1 counters to the displayed stats.
+  const effectivePT = (): string | null | undefined => {
+    if (!card.pt) return card.pt;
+    const plus = card.counters?.plusOne ?? 0;
+    const minus = card.counters?.minusOne ?? 0;
+    if (plus === 0 && minus === 0) return card.pt;
+    const parts = card.pt.split('/');
+    if (parts.length !== 2) return card.pt;
+    const p = parseInt(parts[0]);
+    const t = parseInt(parts[1]);
+    if (isNaN(p) || isNaN(t)) return card.pt;
+    return `${p + plus - minus}/${t + plus - minus}`;
+  };
+  const displayPT = effectivePT();
+  const ptBoosted = (card.counters?.plusOne ?? 0) > (card.counters?.minusOne ?? 0);
+
   return (
     <div
       className="card-token relative select-none group"
@@ -221,16 +237,20 @@ export function CardToken({
           <div className="text-zinc-400 truncate font-mono" style={{ fontSize: dims.type }}>
             {card.type}
           </div>
-          {card.pt && (
+          {displayPT && (
             <div
-              className="font-mono font-semibold text-zinc-100 px-1.5 py-0.5 rounded"
+              className="font-mono font-semibold px-1.5 py-0.5 rounded"
               style={{
                 fontSize: dims.pt - 4,
-                background: '#0008',
-                boxShadow: '0 0 0 1px rgba(255,255,255,0.1)',
+                background: ptBoosted ? 'rgba(22,163,74,0.65)' : '#0008',
+                color: ptBoosted ? '#f0fdf4' : '#fafafa',
+                boxShadow: ptBoosted
+                  ? '0 0 0 1px rgba(22,163,74,0.85), 0 0 8px rgba(22,163,74,0.45)'
+                  : '0 0 0 1px rgba(255,255,255,0.1)',
               }}
+              title={ptBoosted ? 'Boosted by counters' : undefined}
             >
-              {card.pt}
+              {displayPT}
             </div>
           )}
         </div>
@@ -265,6 +285,27 @@ export function CardToken({
             title="Added as freeform — not matched to your deck"
           >
             ~
+          </div>
+        )}
+
+        {/* token tag */}
+        {card.token && (
+          <div
+            className="absolute font-mono font-bold uppercase"
+            style={{
+              bottom: dims.padY + dims.type + 26,
+              left: dims.padX + 2,
+              fontSize: 8,
+              letterSpacing: '0.1em',
+              padding: '1px 5px',
+              borderRadius: 3,
+              background: 'rgba(160,120,255,0.22)',
+              color: 'var(--accent)',
+              boxShadow: '0 0 0 1px rgba(160,120,255,0.35)',
+            }}
+            title="Creature token"
+          >
+            token
           </div>
         )}
       </div>

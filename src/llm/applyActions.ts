@@ -129,6 +129,43 @@ export function applyActions(
         result.applied++;
         break;
       }
+      case 'ai_declare_attackers': {
+        // Resolve names → ids on the AI's battlefield, skip tapped creatures.
+        const ids: string[] = [];
+        for (const name of action.attackers) {
+          const card = state.players.ai.zones.battlefield.find(
+            (c) => c.name.toLowerCase() === name.toLowerCase() && !c.tapped,
+          );
+          if (!card) {
+            result.skipped.push({ action, reason: `no untapped AI attacker "${name}" on battlefield` });
+            continue;
+          }
+          ids.push(card.id);
+        }
+        if (ids.length > 0) {
+          dispatch({ type: 'COMBAT_AI_DECLARE', attackerIds: ids });
+          result.applied++;
+        } else {
+          result.skipped.push({ action, reason: 'no resolvable AI attackers' });
+        }
+        break;
+      }
+      case 'add_counter': {
+        const card =
+          state.players.ai.zones.battlefield.find(
+            (c) => c.name.toLowerCase() === action.cardName.toLowerCase(),
+          ) ??
+          state.players.human.zones.battlefield.find(
+            (c) => c.name.toLowerCase() === action.cardName.toLowerCase(),
+          );
+        if (!card) {
+          result.skipped.push({ action, reason: `no card "${action.cardName}" on any battlefield` });
+          continue;
+        }
+        dispatch({ type: 'ADJUST_COUNTER', cardId: card.id, kind: action.counter, delta: action.delta });
+        result.applied++;
+        break;
+      }
     }
   }
   return result;
