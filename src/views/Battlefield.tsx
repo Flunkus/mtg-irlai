@@ -16,9 +16,10 @@ import { STARTER_DECK } from '../mocks/sampleDeck';
 import { PHASES, MANA_COLORS } from '../types';
 import type { Card, ManaColor } from '../types';
 import { proposeAIMove } from '../llm/aiBrain';
+import { resolveSpell } from '../llm/spellResolver';
 import { applyActions } from '../llm/applyActions';
 import { isLLMConfigured } from '../llm/client';
-import type { AIProposal as LLMProposal } from '../llm/actionSchemas';
+import type { AIProposal as LLMProposal, SpellResolution } from '../llm/actionSchemas';
 import { useSpeech } from '../voice/useSpeech';
 import { useTTS } from '../voice/tts';
 import { parseVoiceTranscript } from '../voice/parseVoice';
@@ -1475,15 +1476,45 @@ function MicButton({
 /** Re-exported for any callers that previously imported from this module. */
 export type AIProposal = LLMProposal;
 
+const QUESTION_CHIPS = [
+  "That's not legal — recheck the rules",
+  'You miscounted your mana',
+  'Wrong turn / board count',
+  'Why this and not attacking?',
+];
+
 function AIDecisionPopup({
   proposal,
   onApprove,
   onReject,
+  onQuestion,
+  reconsidering,
+  canQuestion = true,
+  revised,
 }: {
   proposal: AIProposal | null;
   onApprove: () => void;
   onReject: () => void;
+  onQuestion: (question: string) => void;
+  reconsidering?: boolean;
+  canQuestion?: boolean;
+  revised?: boolean;
 }) {
+  const [asking, setAsking] = React.useState(false);
+  const [text, setText] = React.useState('');
+
+  // Collapse the question panel whenever a fresh (revised) proposal arrives.
+  React.useEffect(() => {
+    setAsking(false);
+    setText('');
+  }, [proposal]);
+
+  const submit = (q: string) => {
+    const trimmed = q.trim();
+    if (!trimmed || reconsidering) return;
+    onQuestion(trimmed);
+  };
+
   if (!proposal) return null;
   return (
     <div
@@ -1507,7 +1538,9 @@ function AIDecisionPopup({
             AI
           </div>
           <div className="flex-1">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Proposed move</div>
+            <div className="text-[10px] uppercase tracking-[0.18em] font-mono" style={{ color: revised ? 'var(--accent)' : '#71717a' }}>
+              {revised ? 'Revised after your question' : 'Proposed move'}
+            </div>
             <div className="text-zinc-100 text-sm font-medium">{proposal.title}</div>
           </div>
           <div className="text-[10px] font-mono text-zinc-500">
@@ -1524,16 +1557,75 @@ function AIDecisionPopup({
           </div>
         </div>
 
+        {asking && (
+          <div className="px-6 pb-1 pt-1">
+            <div className="bg-zinc-950 border border-zinc-800/80 rounded-md p-3">
+              <div className="flex flex-wrap gap-1.5 mb-2.5">
+                {QUESTION_CHIPS.map((chip) => (
+                  <button
+                    key={chip}
+                    onClick={() => submit(chip)}
+                    disabled={reconsidering}
+                    className="px-2.5 py-1 rounded-full text-[11px] bg-zinc-900 border border-zinc-800 hover:border-zinc-600 text-zinc-300 transition-colors disabled:opacity-50"
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(text);
+                }}
+                placeholder="Or type your own challenge… (⌘/Ctrl+Enter to send)"
+                rows={2}
+                disabled={reconsidering}
+                className="w-full resize-none rounded-md bg-zinc-900 border border-zinc-800 focus:border-zinc-600 outline-none px-3 py-2 text-[13px] text-zinc-200 placeholder:text-zinc-600 disabled:opacity-50"
+              />
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setAsking(false)}
+                  disabled={reconsidering}
+                  className="px-3 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => submit(text)}
+                  disabled={reconsidering || !text.trim()}
+                  className="flex-1 py-1.5 rounded-md text-xs font-medium transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                  style={{ background: 'var(--accent)', color: '#18181b' }}
+                >
+                  {reconsidering ? 'Reconsidering…' : 'Ask the AI to reconsider'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="px-6 py-4 border-t border-zinc-800/80 flex gap-2.5">
           <button
             onClick={onReject}
-            className="flex-1 py-2.5 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-medium transition-colors"
+            disabled={reconsidering}
+            className="flex-1 py-2.5 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-medium transition-colors disabled:opacity-50"
           >
             Reject
           </button>
+          {canQuestion && !asking && (
+            <button
+              onClick={() => setAsking(true)}
+              disabled={reconsidering}
+              className="flex-1 py-2.5 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-medium transition-colors disabled:opacity-50"
+              title="Challenge the AI and have it reconsider"
+            >
+              {reconsidering ? 'Reconsidering…' : 'Question'}
+            </button>
+          )}
           <button
             onClick={onApprove}
-            className="flex-1 py-2.5 rounded-md text-sm font-medium transition-all hover:brightness-110 active:scale-[0.98]"
+            disabled={reconsidering}
+            className="flex-1 py-2.5 rounded-md text-sm font-medium transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
             style={{ background: 'var(--accent)', color: '#18181b' }}
           >
             Approve →
@@ -1549,6 +1641,116 @@ function ReasonRow({ label, detail }: { label: string; detail: string }) {
     <div className="flex items-baseline gap-3 text-xs">
       <div className="font-mono uppercase tracking-wider text-zinc-500 w-16 shrink-0">{label}</div>
       <div className="text-zinc-300">{detail}</div>
+    </div>
+  );
+}
+
+/** Render one resolved spell action as a short human-readable line. */
+function describeAction(a: import('../llm/actionSchemas').GameAction): string {
+  switch (a.kind) {
+    case 'move':
+      return `${a.cardName}: ${a.fromZone} → ${a.toZone}`;
+    case 'adjust_life':
+      return `${a.player === 'ai' ? 'AI' : 'You'} life ${a.delta >= 0 ? '+' : ''}${a.delta}`;
+    case 'add_counter':
+      return `${a.cardName}: ${a.delta >= 0 ? '+' : ''}${a.delta} ${a.counter} counter`;
+    case 'tap':
+      return `Tap ${a.cardName}`;
+    case 'untap':
+      return `Untap ${a.cardName}`;
+    case 'play':
+      return `Play ${a.cardName} → ${a.zone}`;
+    default:
+      return a.kind;
+  }
+}
+
+function SpellResolvePopup({
+  cardName,
+  resolution,
+  onApprove,
+  onReject,
+}: {
+  cardName: string;
+  /** null while the LLM is still resolving. */
+  resolution: SpellResolution | null;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const loading = resolution === null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)' }}
+    >
+      <div
+        className="w-[480px] rounded-xl overflow-hidden"
+        style={{
+          background: 'linear-gradient(180deg, #1c1c20, #131316)',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08), 0 0 80px rgba(160,120,255,0.15)',
+          animation: 'popupIn 280ms cubic-bezier(.2,.9,.3,1.2)',
+        }}
+      >
+        <div className="px-6 py-4 border-b border-zinc-800/80 flex items-center gap-3">
+          <div
+            className="w-8 h-8 rounded-md flex items-center justify-center font-mono text-xs font-bold"
+            style={{ background: 'var(--accent)', color: '#18181b' }}
+          >
+            ✦
+          </div>
+          <div className="flex-1">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-mono">Resolve spell</div>
+            <div className="text-zinc-100 text-sm font-medium">{cardName}</div>
+          </div>
+        </div>
+
+        <div className="px-6 py-5">
+          {loading ? (
+            <div className="flex items-center gap-2.5 text-zinc-400 text-sm py-2">
+              <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--accent)', animation: 'aiTyping 1s infinite' }} />
+              Reading the card and the board…
+            </div>
+          ) : (
+            <>
+              <div className="text-zinc-200 text-base leading-relaxed mb-4">{resolution.summary}</div>
+              {resolution.actions.length > 0 ? (
+                <div className="bg-zinc-950 border border-zinc-800/80 rounded-md p-3 space-y-1.5">
+                  {resolution.actions.map((a, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-zinc-300">
+                      <span className="w-1 h-1 rounded-full shrink-0" style={{ background: 'var(--accent)' }} />
+                      <span className="font-mono">{describeAction(a)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-zinc-950 border border-zinc-800/80 rounded-md p-3 text-xs text-zinc-400">
+                  No automatic board changes — resolve this one by hand.
+                </div>
+              )}
+              {resolution.note && (
+                <div className="text-[11px] text-zinc-500 font-mono mt-3 leading-snug">{resolution.note}</div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-zinc-800/80 flex gap-2.5">
+          <button
+            onClick={onReject}
+            className="flex-1 py-2.5 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 text-sm font-medium transition-colors"
+          >
+            {loading ? 'Cancel' : 'Resolve manually'}
+          </button>
+          <button
+            onClick={onApprove}
+            disabled={loading || resolution.actions.length === 0}
+            className="flex-1 py-2.5 rounded-md text-sm font-medium transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: 'var(--accent)', color: '#18181b' }}
+          >
+            Apply →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1755,6 +1957,12 @@ export function Battlefield() {
 
   // PlayBar handlers (per-player; the bar picks the player via the side toggle).
   const playCardToZone = (card: Card, zone: PlayZone, player: PlaySide) => {
+    // A human-cast instant/sorcery can't stay on the battlefield — it resolves to the
+    // graveyard. Route it there regardless of the selected zone, then (if the LLM is
+    // configured) kick off auto-resolution of its effect.
+    const isSpell = player === 'human' && /Instant|Sorcery/i.test(card.type) && !/Land/i.test(card.type);
+    if (isSpell && zone !== 'graveyard') zone = 'graveyard';
+
     const tappedFlag = zone === 'battlefield' ? { tapped: false } : {};
     // Place the card. Both sides now track hand contents as cards (previously human hand was count-only).
     dispatch({ type: 'PLACE_CARD', player, zone, card: { ...card, ...tappedFlag } });
@@ -1787,6 +1995,45 @@ export function Battlefield() {
       setLog((l) => [{ who: player, text: `${sideLabel}: ${card.name} → ${zone}` }, ...l].slice(0, 12));
     }
     setLastPlayed({ key: Date.now(), text: `+ ${card.name} → ${sideLabel}'s ${zone}` });
+
+    if (isSpell && isLLMConfigured()) startSpellResolution(card);
+  };
+
+  // ---- Human spell resolution (LLM referee) ----
+  const [spellResolve, setSpellResolve] = React.useState<{ card: Card; resolution: SpellResolution } | null>(null);
+  const [resolvingSpell, setResolvingSpell] = React.useState<Card | null>(null);
+
+  const startSpellResolution = (card: Card) => {
+    setResolvingSpell(card);
+    narrate(`Resolving ${card.name}…`, 2000);
+    resolveSpell(state, card)
+      .then((resolution) => setSpellResolve({ card, resolution }))
+      .catch(() => narrate(`Couldn't auto-resolve ${card.name} — resolve it manually.`, 2800))
+      .finally(() => setResolvingSpell(null));
+  };
+
+  const approveSpellResolution = () => {
+    if (!spellResolve) return;
+    const { card, resolution } = spellResolve;
+    if (resolution.actions.length > 0) {
+      const result = applyActions(resolution.actions, state, dispatch);
+      setLog((l) =>
+        [
+          { who: 'human' as const, text: `Resolved ${card.name}: ${resolution.summary} (${result.applied} action${result.applied === 1 ? '' : 's'})` },
+          ...l,
+        ].slice(0, 12),
+      );
+    }
+    setSpellResolve(null);
+  };
+
+  const rejectSpellResolution = () => {
+    if (spellResolve) {
+      setLog((l) =>
+        [{ who: 'human' as const, text: `${spellResolve.card.name} — resolving manually` }, ...l].slice(0, 12),
+      );
+    }
+    setSpellResolve(null);
   };
 
   const createToken = ({
@@ -1845,26 +2092,20 @@ export function Battlefield() {
     setLog((l) => [{ who: player, text: `${label} removed ${card.name} from hand` }, ...l].slice(0, 12));
   };
 
-  const drawCard = (player: PlaySide) => {
-    if (player === 'human') {
-      if (humanLibrary <= 0) {
-        narrate('Empty library. You lose on your next draw.', 2200);
-        return;
-      }
-      dispatch({ type: 'INC_LIBRARY_COUNT', player: 'human', delta: -1 });
-      dispatch({ type: 'INC_HAND_COUNT', delta: 1 });
-      setLog((l) => [{ who: 'human' as const, text: 'You drew a card' }, ...l].slice(0, 12));
-      setLastPlayed({ key: Date.now(), text: 'You drew a card' });
-    }
-    // For AI, the PlayBar focuses the input instead — see PlayBar's Draw button.
-  };
+  // Draw is no longer a count-only action: the PlayBar's Draw button focuses the
+  // input on the Hand zone so the player names the card they drew (it's tracked,
+  // not a ghost). Library is decremented when the named card is added to hand.
 
   const mulligan = (player: PlaySide) => {
-    if (player !== 'human') return; // Mulligan only meaningful for the human's count.
+    if (player !== 'human') return; // Mulligan only meaningful for the human.
+    // Shuffle the whole tracked hand back into the library and clear it; the player
+    // re-draws physically and logs their new hand card by card.
+    state.players.human.zones.hand.forEach((c) => dispatch({ type: 'REMOVE_CARD', cardId: c.id }));
     dispatch({ type: 'INC_LIBRARY_COUNT', player: 'human', delta: humanHandCount });
     dispatch({ type: 'SET_HAND_COUNT', value: 0 });
-    setTimeout(() => dispatch({ type: 'SET_HAND_COUNT', value: 7 }), 200);
-    setLog((l) => [{ who: 'human' as const, text: 'Mulligan — shuffled hand back' }, ...l].slice(0, 12));
+    setLog((l) =>
+      [{ who: 'human' as const, text: 'Mulligan — hand shuffled back. Re-draw and log your new hand.' }, ...l].slice(0, 12),
+    );
     setLastPlayed({ key: Date.now(), text: 'Mulligan' });
   };
 
@@ -1988,6 +2229,8 @@ export function Battlefield() {
   };
 
   const [aiError, setAiError] = React.useState<string | null>(null);
+  const [reconsidering, setReconsidering] = React.useState(false);
+  const [aiRevised, setAiRevised] = React.useState(false);
 
   const takeAITurn = async () => {
     if (activeSide !== 'ai') {
@@ -1996,6 +2239,7 @@ export function Battlefield() {
     }
     setAiTaking(true);
     setAiError(null);
+    setAiRevised(false);
     narrate('Let me think about this…', 2400);
     try {
       const proposal: AIProposal = isLLMConfigured()
@@ -2031,6 +2275,41 @@ export function Battlefield() {
       setAiError(msg);
       setPopup(true);
       narrate('Hmm. My brain hit a snag.', 1800);
+    }
+  };
+
+  // Human challenges the current proposal; the brain re-evaluates with the
+  // challenge + the deterministic resource block and returns a revised line.
+  const questionAI = async (question: string) => {
+    if (!aiProposal || reconsidering) return;
+    if (!isLLMConfigured()) {
+      narrate('I need an API key to reconsider. Add VITE_ANTHROPIC_API_KEY.', 2600);
+      return;
+    }
+    setReconsidering(true);
+    setLog((l) => [{ who: 'human' as const, text: `Questioned AI: "${question}"` }, ...l]);
+    narrate('Fair point. Let me reconsider…', 2400);
+    try {
+      const revised = await proposeAIMove(
+        state,
+        activePersona
+          ? {
+              name: activePersona.name,
+              archetypeLabel: activePersona.archetypeLabel,
+              personalityPrompt: activePersona.personalityPrompt,
+            }
+          : null,
+        { priorProposal: aiProposal, question },
+      );
+      setAiProposal(revised);
+      setAiRevised(true);
+      const line = revised.spokenLine?.trim() || 'Revised.';
+      speakOutLoud(line, Math.max(1400, Math.min(4500, line.length * 70)));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'AI brain failed';
+      narrate(`Couldn't reconsider: ${msg}`, 3000);
+    } finally {
+      setReconsidering(false);
     }
   };
 
@@ -2276,6 +2555,7 @@ export function Battlefield() {
     setPopup(false);
     setAiProposal(null);
     setAiError(null);
+    setAiRevised(false);
 
     // Auto-advance the phase once the AI's decision is in. We skip this when:
     //  - The AI declared attackers (combat UI now needs human blockers; COMBAT_APPLY_RESULT will advance later)
@@ -2292,6 +2572,7 @@ export function Battlefield() {
     setPopup(false);
     setAiProposal(null);
     setAiError(null);
+    setAiRevised(false);
   };
 
   // Voice: webkitSpeechRecognition → Claude (Haiku) → applyActions
@@ -2574,8 +2855,8 @@ export function Battlefield() {
             humanDeck={playBarDeck}
             aiDeck={playBarAiDeck}
             activePlayer={activeSide}
+            activePhase={phase}
             onPlay={playCardToZone}
-            onDraw={drawCard}
             onMulligan={mulligan}
             lastPlayed={lastPlayed}
           />
@@ -2630,9 +2911,28 @@ export function Battlefield() {
       </div>
 
       {popup && aiError && <AIErrorPopup message={aiError} onClose={rejectAI} />}
-      {popup && !aiError && <AIDecisionPopup proposal={aiProposal} onApprove={approveAI} onReject={rejectAI} />}
+      {popup && !aiError && (
+        <AIDecisionPopup
+          proposal={aiProposal}
+          onApprove={approveAI}
+          onReject={rejectAI}
+          onQuestion={questionAI}
+          reconsidering={reconsidering}
+          canQuestion={isLLMConfigured()}
+          revised={aiRevised}
+        />
+      )}
 
       <CardDetailModal card={zoomCard} onClose={() => setZoomCard(null)} />
+
+      {(resolvingSpell || spellResolve) && (
+        <SpellResolvePopup
+          cardName={(spellResolve?.card ?? resolvingSpell)!.name}
+          resolution={spellResolve?.resolution ?? null}
+          onApprove={approveSpellResolution}
+          onReject={rejectSpellResolution}
+        />
+      )}
 
       {showAiHand && (
         <HandOverlay

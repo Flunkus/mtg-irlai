@@ -4,7 +4,7 @@
 
 import * as React from 'react';
 import { ManaCost } from './CardToken';
-import type { Card } from '../types';
+import type { Card, Phase } from '../types';
 
 export type Zone = 'battlefield' | 'graveyard' | 'exile' | 'hand';
 export type Side = 'human' | 'ai';
@@ -48,15 +48,16 @@ interface PlayBarProps {
   aiDeck: Card[];
   /** Whose turn it is. The play bar auto-selects this side as the default target. */
   activePlayer: Side;
+  /** Current game phase. Drives the default "send to" zone (Draw → Hand, Main → Battlefield). */
+  activePhase: Phase;
   /** Place a card. The handler is responsible for any library-count side-effects. */
   onPlay: (card: Card, zone: Zone, side: Side) => void;
-  onDraw: (side: Side) => void;
   onDiscard?: () => void;
   onMulligan: (side: Side) => void;
   lastPlayed: { key: number; text: string } | null;
 }
 
-export function PlayBar({ humanDeck, aiDeck, activePlayer, onPlay, onDraw, onMulligan, lastPlayed }: PlayBarProps) {
+export function PlayBar({ humanDeck, aiDeck, activePlayer, activePhase, onPlay, onMulligan, lastPlayed }: PlayBarProps) {
   const [query, setQuery] = React.useState('');
   const [zone, setZone] = React.useState<Zone>('battlefield');
   const [forSide, setForSide] = React.useState<Side>(activePlayer);
@@ -70,6 +71,14 @@ export function PlayBar({ humanDeck, aiDeck, activePlayer, onPlay, onDraw, onMul
     setForSide(activePlayer);
   }, [activePlayer]);
 
+  // Default the "send to" zone to match the phase as a convenience: cards you log in
+  // the Draw step go to hand, cards you log in a main phase hit the battlefield. Only
+  // fires on phase change, so a manual override mid-phase sticks.
+  React.useEffect(() => {
+    if (activePhase === 'Draw') setZone('hand');
+    else if (activePhase === 'Main 1' || activePhase === 'Main 2') setZone('battlefield');
+  }, [activePhase]);
+
   const deckForSide = forSide === 'human' ? humanDeck : aiDeck;
 
   const catalogue = React.useMemo(() => {
@@ -81,9 +90,25 @@ export function PlayBar({ humanDeck, aiDeck, activePlayer, onPlay, onDraw, onMul
     });
   }, [deckForSide]);
 
-  const matches = query.trim()
-    ? catalogue.filter((c) => c.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6)
-    : [];
+  // Match by name OR — when the query is purely digits — by collector number.
+  // Leading zeros are normalized both ways, so "297" finds collector number "0297".
+  const stripZeros = (s: string) => s.replace(/^0+/, '') || '0';
+  const matches = (() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const isNumeric = /^\d+$/.test(q);
+    const qNum = isNumeric ? stripZeros(q) : '';
+    return catalogue
+      .filter((c) => {
+        if (c.name.toLowerCase().includes(q)) return true;
+        if (isNumeric && c.collectorNumber) {
+          const cn = c.collectorNumber.toLowerCase();
+          return cn === q || stripZeros(cn) === qNum;
+        }
+        return false;
+      })
+      .slice(0, 6);
+  })();
 
   const playCard = (card: Card | null) => {
     const data: Card =
@@ -290,6 +315,11 @@ export function PlayBar({ humanDeck, aiDeck, activePlayer, onPlay, onDraw, onMul
                   >
                     <ManaCost cost={m.cost} size={13} />
                     <span className="text-zinc-100 text-sm flex-1 truncate">{m.name}</span>
+                    {m.set && m.collectorNumber && (
+                      <span className="text-zinc-600 text-[9px] font-mono uppercase tracking-wider truncate">
+                        {m.set} {m.collectorNumber}
+                      </span>
+                    )}
                     <span className="text-zinc-500 text-[10px] font-mono uppercase tracking-wider truncate">
                       {m.type.split('—')[0].trim()}
                     </span>
@@ -376,13 +406,10 @@ export function PlayBar({ humanDeck, aiDeck, activePlayer, onPlay, onDraw, onMul
           <ActionBtn
             label="Draw"
             onClick={() => {
-              if (forSide === 'ai') {
-                // AI hand needs a specific card — focus the input instead of an opaque count-only draw.
-                setZone('hand');
-                inputRef.current?.focus();
-                return;
-              }
-              onDraw(forSide);
+              // Draw is always "name the card you drew" — focus the input on the Hand
+              // zone for either side, so the drawn card is tracked rather than a ghost count.
+              setZone('hand');
+              inputRef.current?.focus();
             }}
             shortcut="D"
           />

@@ -5,6 +5,7 @@ import { AIProposalSchema, type AIProposal } from './actionSchemas';
 import { structuredCall } from './client';
 import { gameToCanonicalJson, type GameState } from '../state/gameStore';
 import { fetchCollection } from '../api/scryfall';
+import { buildResourceBlock } from './manaModel';
 import type { Card } from '../types';
 
 // Module-level cache: card-name → enrichment (oracle text + mana cost).
@@ -57,11 +58,21 @@ WHAT THE HUMAN SEES
 - A popup with your proposal: title, summary, 2–4 reasons, a confidence score, and a structured list of actions.
 - On approve, the actions are applied to the game state. On reject, you find another line.
 
-RULES TO RESPECT
-- Mana cost: to cast a card from your hand you need enough untapped lands of the right colors on your battlefield. Count carefully.
+RESOURCE RULES (these are the rules you keep breaking — read them every time)
+- An "AI RESOURCES" block is provided below the game state. It is COMPUTED deterministically from the real board. TRUST those numbers over any counting you do in your head. If it says you have 1 untapped mana, you have 1 — do not imagine more.
+- Mana cost: a spell's mana value is the total number of mana it costs. "1W" costs 2 mana (1 generic + 1 white). "UU" costs 2. To cast it you need total available mana ≥ its mana value AND a source for every colored pip. Re-read the cost. A single Plains (1 white) CANNOT pay for a 1W spell — that needs 2 mana.
+- Only UNTAPPED mana sources can be spent. A tapped land produces nothing this turn. Never assume a tapped permanent can be tapped again.
+- A land that "enters the battlefield tapped" produces NO mana on the turn you play it. Do not play such a land and then spend mana from it the same turn.
+- LAND DROP LIMIT: you may play AT MOST ONE land per turn. Your proposal must contain at most one land "play" action. Never play two lands in one turn.
+- TURN NUMBER: use gameMetadata.turnNumber (echoed in the resources block) as the single source of truth for the current turn. Never claim it's a different turn (e.g. don't say "turn 4" when turnNumber is 2). Your strategic reasoning must match the real turn and the real land count.
 - Speed: instants and abilities can be played at almost any time; sorceries only on your main phase.
 - Tapping lands for mana is implicit when you cast a spell — you don't need to include explicit "tap" actions for mana lands. Only include explicit tap/untap actions when activating a non-mana ability.
 - If it's not your turn (gameMetadata.activePlayer !== "AI") and there's no urgent instant-speed play available, return a proposal with title "Pass" and empty actions[].
+
+SELF-CHECK BEFORE YOU OUTPUT
+1. Count the mana every "play" of a nonland spell costs. Is the sum ≤ your untapped mana from the resources block? If not, cut spells until it fits.
+2. Are you playing at most one land?
+3. Does every number in your reasons/summary (turn, land count, mana) match the resources block? Fix any that don't.
 
 PHASE-SPECIFIC BEHAVIOR (read currentPhase carefully)
 - "Untap": Propose to untap all your tapped permanents. Use one "untap" action per tapped card on your battlefield. Title: "Untap step". If nothing is tapped, propose to pass with empty actions[].
@@ -117,6 +128,16 @@ export interface BrainPersona {
   personalityPrompt?: string;
 }
 
+/**
+ * A human challenge to the brain's previous proposal. When passed to
+ * proposeAIMove, the brain re-evaluates its last line in light of the human's
+ * question — correcting an illegal/suboptimal play or defending a sound one.
+ */
+export interface BrainChallenge {
+  priorProposal: AIProposal;
+  question: string;
+}
+
 function buildSystemPrompt(persona?: BrainPersona | null): string {
   if (!persona || !persona.personalityPrompt?.trim()) return SYSTEM_PROMPT;
   const header = [
@@ -135,6 +156,7 @@ function buildSystemPrompt(persona?: BrainPersona | null): string {
 export async function proposeAIMove(
   state: GameState,
   persona?: BrainPersona | null,
+  challenge?: BrainChallenge | null,
 ): Promise<AIProposal> {
   const aiHand = await enrichWithOracle(state.players.ai.zones.hand);
   const aiBoard = await enrichWithOracle(state.players.ai.zones.battlefield);
@@ -152,17 +174,54 @@ export async function proposeAIMove(
   };
   const gameJson = gameToCanonicalJson(enrichedState);
 
+  const resourceBlock = buildResourceBlock({
+    turnNumber: state.turnNumber,
+    currentPhase: state.currentPhase,
+    isAITurn: state.activePlayer === 'ai',
+    aiBattlefield: aiBoard,
+    aiHand,
+    landsPlayedThisTurn: state.aiLandsPlayedThisTurn,
+  });
+
+  const challengeBlock = challenge
+    ? [
+        '',
+        '=== YOUR PREVIOUS PROPOSAL (the human is challenging this) ===',
+        JSON.stringify(
+          {
+            title: challenge.priorProposal.title,
+            summary: challenge.priorProposal.summary,
+            reasons: challenge.priorProposal.reasons,
+            actions: challenge.priorProposal.actions,
+          },
+          null,
+          2,
+        ),
+        '',
+        "=== THE HUMAN'S CHALLENGE ===",
+        `"${challenge.question.trim()}"`,
+        '',
+        'Re-evaluate your line FROM SCRATCH against the AI RESOURCES block above.',
+        '- If the human is right (an illegal play, a miscount, a turn/state error, or a clearly better line), CORRECT your proposal.',
+        '- If your original line was actually legal and sound, KEEP it and use the reasons to explain why the challenge does not change it.',
+        'Either way, output a complete fresh proposal (not a diff). Stay in character.',
+      ].join('\n')
+    : '';
+
   const userPrompt = [
     '=== Current game state (canonical JSON) ===',
     JSON.stringify(gameJson, null, 2),
+    '',
+    resourceBlock,
     '',
     '=== Your hand (full oracle text) ===',
     aiHand.length > 0 ? aiHand.map(formatCardForPrompt).join('\n\n') : '(empty)',
     '',
     '=== Your battlefield (full oracle text) ===',
     aiBoard.length > 0 ? aiBoard.map(formatCardForPrompt).join('\n\n') : '(empty)',
+    challengeBlock,
     '',
-    "What's your move?",
+    challenge ? 'Reconsider and give your revised move.' : "What's your move?",
   ].join('\n');
 
   return await structuredCall({
