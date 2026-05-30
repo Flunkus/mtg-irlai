@@ -111,3 +111,28 @@ export const VoiceActionsSchema = z.object({
 });
 
 export type VoiceActions = z.infer<typeof VoiceActionsSchema>;
+
+/**
+ * Spell resolver — when the HUMAN casts an instant/sorcery, the LLM reads its
+ * oracle text + the board and proposes the concrete state changes that resolve
+ * its effect (destroy → move to graveyard, burn → adjust_life, bounce → move to
+ * hand, pump → add_counter, …). The human reviews and approves.
+ */
+export const SpellResolutionSchema = z.object({
+  summary: z
+    .string()
+    .describe("One-sentence plain-English description of what resolving the spell does, e.g. \"Destroy the AI's Goblin Guide.\""),
+  actions: z
+    .array(GameActionSchema)
+    .describe(
+      'Concrete game actions that resolve the spell. Empty if the spell has no board/life effect the app can model (e.g. pure card draw or scry).',
+    ),
+  needsManual: z
+    .boolean()
+    .describe('True if the effect cannot be expressed as actions and the human should resolve it by hand.'),
+  note: z
+    .string()
+    .describe('Short caveat shown to the human — e.g. which target was chosen, or why manual resolution is needed. Empty string if none.'),
+});
+
+export type SpellResolution = z.infer<typeof SpellResolutionSchema>;

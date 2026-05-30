@@ -48,6 +48,10 @@ export function applyActions(
   dispatch: React.Dispatch<ReducerAction>,
 ): ApplyResult {
   const result: ApplyResult = { applied: 0, skipped: [] };
+  // Backstop for the one-land-per-turn rule: even if the brain proposes two land
+  // plays in a single proposal — or proposes another land in a later proposal the
+  // same turn — only one is applied. Seed from the turn's running count.
+  let aiLandPlayed = state.aiLandsPlayedThisTurn > 0;
 
   for (const action of actions) {
     switch (action.kind) {
@@ -76,6 +80,15 @@ export function applyActions(
         // oracle text / image; remove it from the hand on play.
         const sourceCard =
           action.player === 'ai' ? findInZone(state, 'ai', 'hand', action.cardName) : undefined;
+        // Enforce one-land-per-turn on the AI side (the brain occasionally proposes two).
+        const isLand = /land/i.test(sourceCard?.type ?? '');
+        if (action.player === 'ai' && action.zone === 'battlefield' && isLand) {
+          if (aiLandPlayed) {
+            result.skipped.push({ action, reason: 'second land this turn — only one land may be played per turn' });
+            continue;
+          }
+          aiLandPlayed = true;
+        }
         const placed: Card = sourceCard
           ? { ...sourceCard, id: freshId('play'), tapped: false }
           : {

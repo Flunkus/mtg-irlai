@@ -23,6 +23,12 @@ export interface GameState {
   turnNumber: number;
   currentPhase: Phase;
   activePlayer: Player;
+  /**
+   * Lands the AI has put onto the battlefield this turn. Resets at the start of
+   * each new turn. Lets the resource model tell the brain how many land drops
+   * remain (one per turn) even across multiple brain queries in the same turn.
+   */
+  aiLandsPlayedThisTurn: number;
   players: Record<Player, PlayerState>;
   // Combat sub-state. Kept in the store so combat is part of the canonical snapshot
   // and the AI brain can react to it.
@@ -68,12 +74,15 @@ const INITIAL: GameState = {
   turnNumber: 3,
   currentPhase: 'Main 1',
   activePlayer: 'human',
+  aiLandsPlayedThisTurn: 0,
   players: {
     human: {
       lifeTotal: 20,
       zones: { battlefield: HUMAN_BATTLEFIELD, graveyard: [], exile: [], hand: [] },
       libraryCount: 52,
-      handCount: 4,
+      // The human hand is tracked as real cards in zones.hand — there is no
+      // untracked "ghost" count. handCount stays 0; the player adds their cards.
+      handCount: 0,
     },
     ai: {
       lifeTotal: 20,
@@ -128,6 +137,8 @@ function applyPhase(state: GameState, newPhase: Phase, newActivePlayer: Player, 
     currentPhase: newPhase,
     activePlayer: newActivePlayer,
     turnNumber: newTurn,
+    // A new turn refreshes the AI's one-land-per-turn allowance.
+    aiLandsPlayedThisTurn: newTurn !== state.turnNumber ? 0 : state.aiLandsPlayedThisTurn,
     combatStep: isHumanCombat ? 'declare' : null,
     attackingSide: isHumanCombat ? 'human' : state.attackingSide,
     attackers: isHumanCombat ? state.attackers : [],
@@ -162,7 +173,12 @@ export function reducer(state: GameState, action: GameAction): GameState {
     }
     case 'PLACE_CARD': {
       const p = state.players[action.player];
-      return setZone(state, action.player, action.zone, [...p.zones[action.zone], action.card]);
+      const next = setZone(state, action.player, action.zone, [...p.zones[action.zone], action.card]);
+      // Track the AI's land drops so the resource model knows how many remain this turn.
+      if (action.player === 'ai' && action.zone === 'battlefield' && /land/i.test(action.card.type ?? '')) {
+        return { ...next, aiLandsPlayedThisTurn: state.aiLandsPlayedThisTurn + 1 };
+      }
+      return next;
     }
     case 'REMOVE_CARD': {
       const stripFromAllZones = (p: PlayerState): PlayerState => ({
@@ -512,34 +528,33 @@ export interface NewGameOptions {
   /** Cards in the AI's deck. */
   aiDeckCards: Card[];
   startingLife: number;
-  handSize: number;
   /** Who goes first. */
   activePlayer?: Player;
 }
 
 /**
  * Build a fresh GameState for a new game. Sets library counts from the full decks,
- * resets life totals, turn to 1. Both hands start EMPTY — the human player will
- * tell the app what's in each hand as physical cards are dealt at the table.
+ * resets life totals, turn to 1. Both hands start EMPTY.
  *
- * The handSize parameter only affects the human's hand COUNT (since the human's
- * cards stay physical). The user manually adds the AI's opening hand via the
- * play bar's side toggle.
+ * There is no "opening hand" auto-deal: the human draws their physical cards and
+ * logs each one into the app (it leaves the library as it's added), and the AI's
+ * hand is populated the same way via the play bar's side toggle.
  */
 export function buildNewGameState(opts: NewGameOptions): GameState {
   const aiLibrary = expandDeck(opts.aiDeckCards).length;
-  const humanLibrary = Math.max(0, expandDeck(opts.humanDeckCards).length - opts.handSize);
+  const humanLibrary = expandDeck(opts.humanDeckCards).length;
 
   return {
     turnNumber: 1,
     currentPhase: 'Untap',
     activePlayer: opts.activePlayer ?? 'human',
+    aiLandsPlayedThisTurn: 0,
     players: {
       human: {
         lifeTotal: opts.startingLife,
         zones: { battlefield: [], graveyard: [], exile: [], hand: [] },
         libraryCount: humanLibrary,
-        handCount: Math.min(opts.handSize, expandDeck(opts.humanDeckCards).length),
+        handCount: 0,
       },
       ai: {
         lifeTotal: opts.startingLife,

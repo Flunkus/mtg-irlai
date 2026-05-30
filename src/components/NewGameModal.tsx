@@ -26,7 +26,6 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
   const [humanDeckId, setHumanDeckId] = React.useState<string>('');
   const [aiDeckId, setAiDeckId] = React.useState<string>('');
   const [startingLife, setStartingLife] = React.useState(20);
-  const [handSize, setHandSize] = React.useState(7);
   const [personaId, setPersonaId] = React.useState<string>('');
   const [activePlayer, setActivePlayer] = React.useState<'human' | 'ai'>('human');
 
@@ -80,7 +79,6 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
       humanDeckCards: humanDeck?.cards ?? [],
       aiDeckCards: aiDeck?.cards ?? [],
       startingLife,
-      handSize,
       activePlayer,
     });
     // Sync the persona library's active selection so Battlefield + the brain pick this persona up.
@@ -149,7 +147,6 @@ export function NewGameModal({ open, onClose, onStarted }: NewGameModalProps) {
 
           <div className="flex items-center gap-4">
             <NumberField label="Starting life" value={startingLife} onChange={setStartingLife} min={1} max={99} />
-            <NumberField label="Hand size" value={handSize} onChange={setHandSize} min={0} max={20} />
           </div>
 
           <div>
